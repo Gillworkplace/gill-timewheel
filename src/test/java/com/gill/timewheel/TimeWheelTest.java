@@ -75,4 +75,24 @@ public class TimeWheelTest {
         Thread.sleep(250);
         Assertions.assertEquals((1 << 5) - 1, flag.get());
     }
+
+    /**
+     * 取消任务执行
+     */
+    @Test
+    public void testCancelTask() throws InterruptedException {
+        AtomicInteger flag = new AtomicInteger(0);
+        TimeWheel timeWheel = TimeWheelFactory.create(10, 10);
+        long task1 =
+            timeWheel.executeWithDelay(50, "delay-0", () -> flag.accumulateAndGet(1 << 1, (x, old) -> x | old));
+        long task2 =
+            timeWheel.executeWithDelay(100, "delay-1", () -> flag.accumulateAndGet(1 << 2, (x, old) -> x | old));
+        long task3 =
+            timeWheel.executeWithDelay(120, "delay-2", () -> flag.accumulateAndGet(1 << 3, (x, old) -> x | old));
+        timeWheel.cancel(task1);
+        timeWheel.cancel(task2);
+        timeWheel.cancel(task3);
+        Thread.sleep(250);
+        Assertions.assertEquals(0, flag.get());
+    }
 }
