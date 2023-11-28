@@ -14,7 +14,7 @@
 
 ## Architecture
 
-![结构设计](./../img/%E7%BB%93%E6%9E%84%E8%AE%BE%E8%AE%A1.png)
+![结构设计](https://github.com/Gillworkplace/gill-timewheel/blob/gill/design/img/%E7%BB%93%E6%9E%84%E8%AE%BE%E8%AE%A1.png)
 
 `TimeWheel`中使用`Map`来进行时间轮盘的存储，`map.key`代表时间轮盘的任期，`map.value`代表一个时间轮盘。
 
