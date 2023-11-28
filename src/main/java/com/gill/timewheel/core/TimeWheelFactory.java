@@ -48,4 +48,32 @@ public class TimeWheelFactory {
     public static TimeWheel create(long tick, int wheelSize) {
         return create(tick, wheelSize, DefaultTimeWheelExecutor.INSTANCE);
     }
+
+    /**
+     * 创建时间轮盘
+     *
+     * @param name 轮盘名称
+     * @param tick tick
+     * @param wheelSize 轮盘大小
+     * @param expired 幂等任务过期时间
+     * @return 轮盘
+     */
+    public static TimeWheel create(String name, long tick, int wheelSize, long expired) {
+        return new DefaultTimeWheel(name, tick, wheelSize, expired, DefaultTimeWheelExecutor.INSTANCE);
+    }
+
+    /**
+     * 创建时间轮盘
+     *
+     * @param name 轮盘名称
+     * @param tick tick
+     * @param wheelSize 轮盘大小
+     * @param expired 幂等任务过期时间
+     * @param defaultExecutor 默认执行器
+     * @return 轮盘
+     */
+    public static TimeWheel create(String name, long tick, int wheelSize, long expired,
+        ExecutorService defaultExecutor) {
+        return new DefaultTimeWheel(name, tick, wheelSize, expired, defaultExecutor);
+    }
 }

@@ -5,7 +5,9 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ScheduledExecutorService;
@@ -56,9 +58,14 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
     private final long sts;
 
     /**
+     * 幂等缓存的过期时间 ms
+     */
+    private final long expired;
+
+    /**
      * 轮盘
      */
-    private final Map<Long, Wheel> wheels = new ConcurrentHashMap<>();
+    private final ConcurrentSkipListMap<Long, Wheel> wheels = new ConcurrentSkipListMap<>();
 
     /**
      * 任务缓存
@@ -81,13 +88,14 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
     private int tickIdx = 0;
 
     DefaultTimeWheel(long tick, int wheelSize, ExecutorService defaultTaskExecutor) {
-        this(DEFAULT_NAME, tick, wheelSize, defaultTaskExecutor);
+        this(DEFAULT_NAME, tick, wheelSize, 5L * 60 * 1000, defaultTaskExecutor);
     }
 
-    DefaultTimeWheel(String name, long tick, int wheelSize, ExecutorService defaultTaskExecutor) {
+    DefaultTimeWheel(String name, long tick, int wheelSize, long expired, ExecutorService defaultTaskExecutor) {
         this.name = name;
         this.tick = tick;
         this.wheelSize = wheelSize;
+        this.expired = expired;
         this.period = tick * wheelSize;
         this.defaultTaskExecutor = defaultTaskExecutor;
         this.sts = Instant.now().toEpochMilli();
@@ -103,6 +111,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
             final int ti = tickIdx;
             incr();
             Wheel wheel = wheels.computeIfAbsent(t, key -> new Wheel(wheelSize));
+            discardsOldWheel();
             List<Task> tasks = wheel.getAndClearTasks(ti);
             if (tasks.isEmpty()) {
                 return;
@@ -111,10 +120,22 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
             for (Task task : tasks) {
                 ExecutorService executor = task.getExecutorService();
                 Runnable run = task.getRunnable();
+                if (task.isCancel()) {
+                    continue;
+                }
                 executor.execute(run);
             }
         } catch (Exception e) {
             log.error("timewheel {} occur exception: {}", name, e.getMessage());
+        }
+    }
+
+    private void discardsOldWheel() {
+        Entry<Long, Wheel> entry;
+        while ((entry = wheels.firstEntry()) != null && entry.getKey() < term) {
+            long key = entry.getKey();
+            wheels.remove(key);
+            log.trace("timewheel {} discards wheel-{}", name, key);
         }
     }
 
@@ -249,16 +270,19 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
             return;
         }
 
-        if (diff > 0) {
+        // 注册过期移除缓存任务
+        registerRemoveTask(key);
+
+        // 将任务添加到轮盘中
+        if (diff > 0 && executeTime > now) {
             Wheel wheel = wheels.computeIfAbsent(term, t -> new Wheel(wheelSize));
             if (wheel.addTask(tickIdx, task)) {
-                log.debug(
-                    "insert time: {}, timewheel {} add task {} to term {} tickIdx {}, the task will execute at {}", now,
-                    this.name, taskName, term, tickIdx, executeTime);
+                log.debug("insert time: {}, timewheel {} add task {} to the wheel that term is {} and tickIdx is {}",
+                    now, name, taskName, term, tickIdx);
                 return;
             }
         }
-        log.debug("timewheel {} execute task {} at {}", this.name, taskName, now);
+        log.debug("timewheel {} execute task {} right now", name, taskName, now);
         executeNow(taskName, executor, runnable);
     }
 
@@ -270,6 +294,27 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         });
     }
 
+    private void registerRemoveTask(long key) {
+        if (expired <= 0) {
+            return;
+        }
+        long now = Instant.now().toEpochMilli();
+        long expiredTime = expired + now;
+        long diff = expiredTime - sts;
+        long term = diff / period;
+        int tickIdx = (int)(diff % period / tick);
+        String taskName = "remove-" + key;
+        Runnable remove = () -> taskCache.remove(key);
+        if (diff > 0) {
+            Wheel wheel = wheels.computeIfAbsent(term, t -> new Wheel(wheelSize));
+            Task task = new Task(key, taskName, defaultTaskExecutor, remove, now);
+            if (wheel.addTask(tickIdx, task)) {
+                return;
+            }
+        }
+        executeNow(taskName, defaultTaskExecutor, remove);
+    }
+
     /**
      * 删除执行任务
      *
@@ -277,6 +322,10 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
      */
     @Override
     public void cancel(long key) {
-
+        Task task = taskCache.get(key);
+        if (task != null) {
+            log.info("timewheel {} cancels task: {}", name, key);
+            task.cancel();
+        }
     }
 }

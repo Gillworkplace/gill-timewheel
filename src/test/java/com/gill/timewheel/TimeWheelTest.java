@@ -1,6 +1,5 @@
 package com.gill.timewheel;
 
-import com.gill.timewheel.core.TimeWheelFactory;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -9,6 +8,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
+
+import com.gill.timewheel.core.TimeWheelFactory;
 
 /**
  * TimeWheelTest
@@ -59,7 +60,7 @@ public class TimeWheelTest {
         timeWheel.executeWithDelay(13, "delay-1", () -> flag.accumulateAndGet(1 << 1, (x, old) -> x | old));
         timeWheel.executeWithDelay(17, "delay-2", () -> flag.accumulateAndGet(1 << 2, (x, old) -> x | old));
         timeWheel.executeWithDelay(20, "delay-3", () -> flag.accumulateAndGet(1 << 3, (x, old) -> x | old));
-        timeWheel.executeWithDelay(45, "delay-4", () -> flag.accumulateAndGet(1 << 4, (x, old) -> x | old));
+        timeWheel.executeWithDelay(35, "delay-4", () -> flag.accumulateAndGet(1 << 4, (x, old) -> x | old));
         Thread.sleep(50);
         Assertions.assertEquals((1 << 5) - 1, flag.get());
     }
@@ -98,5 +99,22 @@ public class TimeWheelTest {
         timeWheel.cancel(task3);
         Thread.sleep(250);
         Assertions.assertEquals(0, flag.get());
+    }
+
+    @Test
+    public void testIdempotenceExpired() throws InterruptedException {
+        AtomicInteger flag = new AtomicInteger(0);
+        TimeWheel timeWheel = TimeWheelFactory.create("default", 10, 10, 500);
+        timeWheel.executeWithDelay(1, 0, "delay-0", () -> flag.accumulateAndGet(1, (x, old) -> x | old));
+        timeWheel.executeWithDelay(1, 3, "delay-1", () -> flag.accumulateAndGet(1 << 1, (x, old) -> x | old));
+        timeWheel.executeWithDelay(2, 15, "delay-2", () -> flag.accumulateAndGet(1 << 2, (x, old) -> x | old));
+        Thread.sleep(600);
+        timeWheel.executeWithDelay(1, 0, "delay-3", () -> flag.accumulateAndGet(1 << 3, (x, old) -> x | old));
+        timeWheel.executeWithDelay(2, 13, "delay-4", () -> flag.accumulateAndGet(1 << 4, (x, old) -> x | old));
+        Thread.sleep(50);
+        Assertions.assertEquals(1, flag.get() & 1);
+        Assertions.assertEquals(1 << 2, flag.get() & (1 << 2));
+        Assertions.assertEquals(1 << 3, flag.get() & (1 << 3));
+        Assertions.assertEquals(1 << 4, flag.get() & (1 << 4));
     }
 }
