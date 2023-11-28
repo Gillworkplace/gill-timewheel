@@ -3,6 +3,7 @@ package com.gill.timewheel.core;
 import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 
 /**
@@ -26,7 +27,8 @@ class Wheel {
      * @return 任务集合
      */
     public List<Task> getAndClearTasks(int idx) {
-        return wheel.getAndUpdate(idx, prev -> Collections.emptyList());
+        return Optional.ofNullable(wheel.getAndUpdate(idx, prev -> Collections.emptyList()))
+            .orElse(Collections.emptyList());
     }
 
     /**

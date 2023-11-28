@@ -65,8 +65,6 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
      */
     private final Map<Long, Task> taskCache = new ConcurrentHashMap<>();
 
-    private final Map<Long, Object> keyLock = new ConcurrentHashMap<>();
-
     private final ScheduledExecutorService executors =
         new ScheduledThreadPoolExecutor(1, new NamedThreadFactory("timewheel-main", true), HANDLER);
 
@@ -100,16 +98,30 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
     @Override
     public void run() {
-        Wheel wheel = wheels.get(term);
-        if (wheel == null) {
-            return;
+        try {
+            final long t = term;
+            final int ti = tickIdx;
+            incr();
+            Wheel wheel = wheels.computeIfAbsent(t, key -> new Wheel(wheelSize));
+            List<Task> tasks = wheel.getAndClearTasks(ti);
+            if (tasks.isEmpty()) {
+                return;
+            }
+            log.debug("start to execute wheel that term is {} and tickIdx is {}", t, ti);
+            for (Task task : tasks) {
+                ExecutorService executor = task.getExecutorService();
+                Runnable run = task.getRunnable();
+                executor.execute(run);
+            }
+        } catch (Exception e) {
+            log.error("timewheel {} occur exception: {}", name, e.getMessage());
         }
-        List<Task> tasks = wheel.getAndClearTasks(tickIdx++);
-        for (Task task : tasks) {
-            ExecutorService executor = task.getExecutorService();
-            Runnable run = task.getRunnable();
-            executor.execute(run);
-        }
+    }
+
+    private void incr() {
+        tickIdx += 1;
+        term += tickIdx / wheelSize;
+        tickIdx = tickIdx % wheelSize;
     }
 
     /**
@@ -225,27 +237,37 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
     @Override
     public void executeAtTime(long key, long executeTime, ExecutorService executor, String taskName,
         Runnable runnable) {
-
-        // 幂等性校验
-        if (taskCache.containsKey(key)) {
-            return;
-        }
         long now = Instant.now().toEpochMilli();
-        long delay = executeTime - now;
-        long diff = now - sts;
+        long diff = executeTime - sts;
         long term = diff / period;
         int tickIdx = (int)(diff % period / tick);
-        synchronized (keyLock.computeIfAbsent(key, k -> new Object())) {
-            if (taskCache.containsKey(key)) {
+        Task task = new Task(key, taskName, executor, runnable, now);
+
+        // 幂等性校验
+        if (taskCache.computeIfAbsent(key, k -> task) != task) {
+            log.debug("Idempotence check, cancel task: {} {}", key, taskName);
+            return;
+        }
+
+        if (diff > 0) {
+            Wheel wheel = wheels.computeIfAbsent(term, t -> new Wheel(wheelSize));
+            if (wheel.addTask(tickIdx, task)) {
+                log.debug(
+                    "insert time: {}, timewheel {} add task {} to term {} tickIdx {}, the task will execute at {}", now,
+                    this.name, taskName, term, tickIdx, executeTime);
                 return;
             }
-            Wheel wheel = wheels.computeIfAbsent(term, t -> new Wheel(wheelSize));
-            Task task = new Task(key, taskName, executor, runnable, Instant.now().toEpochMilli(), delay);
-            taskCache.put(key, task);
-            wheel.addTask(tickIdx, task);
-            log.debug("timewheel {} add task {} to term {} tickIdx {}, the task will execute at {}", this.name,
-                task.getName(), term, tickIdx, executeTime);
         }
+        log.debug("timewheel {} execute task {} at {}", this.name, taskName, now);
+        executeNow(taskName, executor, runnable);
+    }
+
+    private static void executeNow(String taskName, ExecutorService executor, Runnable runnable) {
+        executor.execute(() -> {
+            log.debug("[{}] start to execute task {}", Instant.now().toEpochMilli(), taskName);
+            runnable.run();
+            log.debug("[{}] finish to execute task {}", Instant.now().toEpochMilli(), taskName);
+        });
     }
 
     /**

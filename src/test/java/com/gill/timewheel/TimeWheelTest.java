@@ -7,6 +7,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -50,7 +51,7 @@ public class TimeWheelTest {
     /**
      * 一个时间轮盘周期内执行延迟任务
      */
-    @Test
+    @RepeatedTest(10)
     public void testDelayInPeriod() throws InterruptedException {
         AtomicInteger flag = new AtomicInteger(0);
         TimeWheel timeWheel = TimeWheelFactory.create(10, 10);
@@ -58,14 +59,15 @@ public class TimeWheelTest {
         timeWheel.executeWithDelay(13, "delay-1", () -> flag.accumulateAndGet(1 << 1, (x, old) -> x | old));
         timeWheel.executeWithDelay(17, "delay-2", () -> flag.accumulateAndGet(1 << 2, (x, old) -> x | old));
         timeWheel.executeWithDelay(20, "delay-3", () -> flag.accumulateAndGet(1 << 3, (x, old) -> x | old));
+        timeWheel.executeWithDelay(45, "delay-4", () -> flag.accumulateAndGet(1 << 4, (x, old) -> x | old));
         Thread.sleep(50);
-        Assertions.assertEquals((1 << 4) - 1, flag.get());
+        Assertions.assertEquals((1 << 5) - 1, flag.get());
     }
 
     /**
      * 多个时间轮盘周期执行延迟任务
      */
-    @Test
+    @RepeatedTest(10)
     public void testDelayCrossPeriods() throws InterruptedException {
         AtomicInteger flag = new AtomicInteger(0);
         TimeWheel timeWheel = TimeWheelFactory.create(10, 10);

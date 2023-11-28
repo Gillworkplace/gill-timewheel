@@ -8,7 +8,7 @@ package com.gill.timewheel.log;
  **/
 public class LogConfig {
 
-    private LogLevel logLevel = LogLevel.DEBUG;
+    private LogLevel logLevel = LogLevel.TRACE;
 
     public LogLevel getLogLevel() {
         return logLevel;
