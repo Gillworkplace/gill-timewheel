@@ -1,9 +1,12 @@
-package com.gill.timewheel;
+package com.gill.timewheel.core;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+
+import com.gill.timewheel.NamedThreadFactory;
+import com.gill.timewheel.TimeWheel;
 
 /**
  * TimeWheelFactory 时间轮盘工厂
@@ -32,7 +35,7 @@ public class TimeWheelFactory {
      * @return 时间轮盘
      */
     public static TimeWheel create(long tick, int wheelSize, ExecutorService defaultExecutor) {
-        return null;
+        return new DefaultTimeWheel(tick, wheelSize, defaultExecutor);
     }
 
     /**

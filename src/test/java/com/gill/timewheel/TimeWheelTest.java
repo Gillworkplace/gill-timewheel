@@ -1,5 +1,6 @@
 package com.gill.timewheel;
 
+import com.gill.timewheel.core.TimeWheelFactory;
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -39,6 +40,7 @@ public class TimeWheelTest {
         timeWheel.executeWithDelay(id, 0, "delay-1", flag::incrementAndGet);
         Thread.sleep(10);
         timeWheel.executeWithDelay(id, 50, "delay-1", flag::incrementAndGet);
+        timeWheel.executeWithDelay(id, 50, "delay-4", flag::incrementAndGet);
         timeWheel.executeWithDelay(id, 60, "delay-2", flag::incrementAndGet);
         timeWheel.executeWithDelay(id, 110, "delay-3", flag::incrementAndGet);
         Thread.sleep(150);
