@@ -113,12 +113,12 @@ public class TimeWheelTest {
     }
 
     /**
-     * 幂等缓存过期后相同key的任务可以再次执行
+     * 指定过期时间，幂等缓存过期
      * 
      * @throws Exception ex
      */
     @Test
-    public void testIdempotenceExpired() throws Exception {
+    public void testIdempotenceExpired_specific() throws Exception {
         AtomicInteger flag = new AtomicInteger(0);
         TimeWheel timeWheel = TimeWheelFactory.create("default", 10, 10, 500);
         timeWheel.executeWithDelay(1, 0, "delay-0", () -> flag.accumulateAndGet(1, (x, old) -> x | old));
@@ -132,6 +132,56 @@ public class TimeWheelTest {
         Assertions.assertEquals(1 << 2, flag.get() & (1 << 2));
         Assertions.assertEquals(1 << 3, flag.get() & (1 << 3));
         Assertions.assertEquals(1 << 4, flag.get() & (1 << 4));
+    }
+
+    /**
+     * 当task对象没有被引用后，幂等缓存由GC决定删除
+     *
+     * @throws Exception ex
+     */
+    @Test
+    public void testIdempotenceExpired_gc() throws Exception {
+        AtomicInteger flag = new AtomicInteger(0);
+        TimeWheel timeWheel = TimeWheelFactory.create("default", 10, 10, TimeWheelFactory.EXPIRED_BY_GC);
+        CompletableFuture<Object> cf = new CompletableFuture<>();
+        timeWheel.executeWithDelay(1, 150, "delay-0", () -> {
+            flag.accumulateAndGet(1, (x, old) -> x | old);
+            cf.complete(1);
+        });
+        timeWheel.executeWithDelay(1, 50, "delay-1", () -> flag.accumulateAndGet(1 << 1, (x, old) -> x | old));
+        cf.get();
+        Thread.sleep(500);
+
+        // gc触发后回收
+        System.gc();
+        Thread.sleep(100);
+        timeWheel.executeWithDelay(1, 0, "delay-2", () -> flag.accumulateAndGet(1 << 2, (x, old) -> x | old));
+        Assertions.assertEquals(1, flag.get() & 1);
+        Assertions.assertEquals(0, flag.get() & (1 << 1));
+        Assertions.assertEquals(1 << 2, flag.get() & (1 << 2));
+    }
+
+    /**
+     * 当延时任务执行完后，幂等缓存就删除
+     *
+     * @throws Exception ex
+     */
+    @Test
+    public void testIdempotenceExpired_afterExecute() throws Exception {
+        AtomicInteger flag = new AtomicInteger(0);
+        TimeWheel timeWheel = TimeWheelFactory.create("default", 10, 10, TimeWheelFactory.EXPIRED_AFTER_EXECUTION);
+        CompletableFuture<Object> cf = new CompletableFuture<>();
+        timeWheel.executeWithDelay(1, 50, "delay-0", () -> {
+            flag.accumulateAndGet(1, (x, old) -> x | old);
+            cf.complete(1);
+        });
+        timeWheel.executeWithDelay(1, 10, "delay-1", () -> flag.accumulateAndGet(1 << 1, (x, old) -> x | old));
+        cf.get();
+        Thread.sleep(100);
+        timeWheel.executeWithDelay(1, 0, "delay-2", () -> flag.accumulateAndGet(1 << 2, (x, old) -> x | old));
+        Assertions.assertEquals(1, flag.get() & 1);
+        Assertions.assertEquals(0, flag.get() & (1 << 1));
+        Assertions.assertEquals(1 << 2, flag.get() & (1 << 2));
     }
 
     /**

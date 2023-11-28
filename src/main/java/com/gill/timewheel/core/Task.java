@@ -50,9 +50,9 @@ class Task {
 
     public Runnable getRunnable() {
         return () -> {
-            log.debug("[{}] start to execute task {}", Instant.now().toEpochMilli(), getName());
+            log.info("[{}] start to execute task {}", Instant.now().toEpochMilli(), getName());
             runnable.run();
-            log.debug("[{}] finish to execute task {}", Instant.now().toEpochMilli(), getName());
+            log.info("[{}] finish to execute task {}", Instant.now().toEpochMilli(), getName());
         };
     }
 

@@ -1,18 +1,25 @@
 package com.gill.timewheel.core;
 
+import java.lang.ref.Reference;
+import java.lang.ref.ReferenceQueue;
+import java.lang.ref.WeakReference;
 import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor.AbortPolicy;
+import java.util.concurrent.ThreadPoolExecutor.DiscardPolicy;
 import java.util.concurrent.TimeUnit;
 
 import com.gill.timewheel.NamedThreadFactory;
@@ -32,7 +39,9 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
     private static final ILogger log = LoggerFactory.getLogger(DefaultTimeWheel.class);
 
-    private static final RejectedExecutionHandler HANDLER = new AbortPolicy();
+    private static final RejectedExecutionHandler EXECUTE_POLICY = new AbortPolicy();
+
+    private static final RejectedExecutionHandler CLEANER_POLICY = new DiscardPolicy();
 
     private static final SecureRandom RANDOM;
 
@@ -70,10 +79,18 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
     /**
      * 任务缓存
      */
-    private final Map<Long, Task> taskCache = new ConcurrentHashMap<>();
+    private final Map<Long, TaskWrapper> taskCache = new ConcurrentHashMap<>();
+
+    /**
+     * 记录被GC回收的taskReference
+     */
+    private final ReferenceQueue<Object> rq = new ReferenceQueue<>();
 
     private final ScheduledExecutorService executors =
-        new ScheduledThreadPoolExecutor(1, new NamedThreadFactory("timewheel-main", true), HANDLER);
+        new ScheduledThreadPoolExecutor(1, new NamedThreadFactory("timewheel-main", true), EXECUTE_POLICY);
+
+    private final ExecutorService cleaner = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
+        new SynchronousQueue<>(), new NamedThreadFactory("timewheel-cleaner", true), CLEANER_POLICY);
 
     private final ExecutorService defaultTaskExecutor;
 
@@ -109,7 +126,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
             final int ti = tickIdx;
             incr();
             Wheel wheel = wheels.computeIfAbsent(t, key -> new Wheel(wheelSize));
-            discardsOldWheel();
+            cleanAsync();
             List<Task> tasks = wheel.getAndClearTasks(ti);
             if (tasks.isEmpty()) {
                 return;
@@ -121,11 +138,18 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
                 if (task.isCancel()) {
                     continue;
                 }
-                executor.execute(run);
+                executor.execute(taskRunnableWrapper(task.getKey(), run));
             }
         } catch (Exception e) {
             log.error("timewheel {} occur exception: {}", name, e.getMessage());
         }
+    }
+
+    private void cleanAsync() {
+        cleaner.execute(() -> {
+            discardsOldWheel();
+            removeUselessTask();
+        });
     }
 
     private void discardsOldWheel() {
@@ -134,6 +158,26 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
             long key = entry.getKey();
             wheels.remove(key);
             log.trace("timewheel {} discards wheel-{}", name, key);
+        }
+    }
+
+    private Runnable taskRunnableWrapper(long key, Runnable runnable) {
+        return () -> {
+            runnable.run();
+            if (expired == 0) {
+                taskCache.remove(key);
+            }
+        };
+    }
+
+    private void removeUselessTask() {
+        if (expired > 0) {
+            return;
+        }
+        Reference<?> ref;
+        while ((ref = rq.poll()) != null) {
+            long key = ((TaskWrapper)ref).getKey();
+            taskCache.remove(key);
         }
     }
 
@@ -262,9 +306,10 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         long term = diff / period;
         int tickIdx = (int)(diff % period / tick);
         Task task = new Task(key, taskName, executor, runnable, now);
+        TaskWrapper taskWrapper = new TaskWrapper(task, rq);
 
         // 幂等性校验
-        if (taskCache.computeIfAbsent(key, k -> task) != task) {
+        if (taskCache.computeIfAbsent(key, k -> taskWrapper) != taskWrapper) {
             log.debug("Idempotence check, cancel task: {} {}", key, taskName);
             return;
         }
@@ -287,9 +332,9 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
     private static void executeNow(String taskName, ExecutorService executor, Runnable runnable) {
         executor.execute(() -> {
-            log.debug("[{}] start to execute task {}", Instant.now().toEpochMilli(), taskName);
+            log.info("[{}] start to execute task {}", Instant.now().toEpochMilli(), taskName);
             runnable.run();
-            log.debug("[{}] finish to execute task {}", Instant.now().toEpochMilli(), taskName);
+            log.info("[{}] finish to execute task {}", Instant.now().toEpochMilli(), taskName);
         });
     }
 
@@ -322,7 +367,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
     @Override
     public void cancel(long key) {
         checkState();
-        Task task = taskCache.get(key);
+        Task task = Optional.ofNullable(taskCache.get(key)).map(WeakReference::get).orElse(null);
         if (task != null) {
             log.info("timewheel {} cancels task: {}", name, key);
             task.cancel();
@@ -337,9 +382,9 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
     @Override
     public void delete(long key) {
         checkState();
-        Task task = taskCache.remove(key);
+        Task task = Optional.ofNullable(taskCache.remove(key)).map(WeakReference::get).orElse(null);
         if (task != null) {
-            log.info("timewheel {} cancels task: {}", name, key);
+            log.info("timewheel {} delete task: {}", name, key);
             task.cancel();
         }
     }

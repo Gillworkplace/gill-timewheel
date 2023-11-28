@@ -18,6 +18,10 @@ public class TimeWheelFactory {
 
     private static final String DEFAULT_NAME = "default";
 
+    public static final long EXPIRED_BY_GC = -1;
+
+    public static final long EXPIRED_AFTER_EXECUTION = 0;
+
     static class DefaultTimeWheelExecutor {
         private static final ThreadPoolExecutor INSTANCE;
 
@@ -30,18 +34,6 @@ public class TimeWheelFactory {
 
     /**
      * 创建时间轮盘
-     * 
-     * @param tick tick
-     * @param wheelSize wheelSize
-     * @param defaultExecutor 默认异步执行的线程池
-     * @return 时间轮盘
-     */
-    public static TimeWheel create(long tick, int wheelSize, ExecutorService defaultExecutor) {
-        return new DefaultTimeWheel(DEFAULT_NAME, tick, wheelSize, 5L * 60 * 1000, defaultExecutor);
-    }
-
-    /**
-     * 创建时间轮盘
      *
      * @param tick tick
      * @param wheelSize wheelSize
@@ -49,6 +41,18 @@ public class TimeWheelFactory {
      */
     public static TimeWheel create(long tick, int wheelSize) {
         return create(tick, wheelSize, DefaultTimeWheelExecutor.INSTANCE);
+    }
+
+    /**
+     * 创建时间轮盘
+     *
+     * @param tick tick
+     * @param wheelSize wheelSize
+     * @param defaultExecutor 默认异步执行的线程池
+     * @return 时间轮盘
+     */
+    public static TimeWheel create(long tick, int wheelSize, ExecutorService defaultExecutor) {
+        return new DefaultTimeWheel(DEFAULT_NAME, tick, wheelSize, -1, defaultExecutor);
     }
 
     /**
