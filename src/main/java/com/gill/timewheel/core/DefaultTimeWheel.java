@@ -36,8 +36,6 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
     private static final SecureRandom RANDOM;
 
-    private static final String DEFAULT_NAME = "default";
-
     static {
         try {
             RANDOM = SecureRandom.getInstanceStrong();
@@ -90,10 +88,6 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
     private int tickIdx = 0;
 
     private volatile boolean running = true;
-
-    DefaultTimeWheel(long tick, int wheelSize, ExecutorService defaultTaskExecutor) {
-        this(DEFAULT_NAME, tick, wheelSize, 5L * 60 * 1000, defaultTaskExecutor);
-    }
 
     DefaultTimeWheel(String name, long tick, int wheelSize, long expired, ExecutorService defaultTaskExecutor) {
         this.name = name;

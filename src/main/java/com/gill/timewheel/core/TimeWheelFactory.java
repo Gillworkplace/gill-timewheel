@@ -16,6 +16,8 @@ import com.gill.timewheel.TimeWheel;
  **/
 public class TimeWheelFactory {
 
+    private static final String DEFAULT_NAME = "default";
+
     static class DefaultTimeWheelExecutor {
         private static final ThreadPoolExecutor INSTANCE;
 
@@ -35,7 +37,7 @@ public class TimeWheelFactory {
      * @return 时间轮盘
      */
     public static TimeWheel create(long tick, int wheelSize, ExecutorService defaultExecutor) {
-        return new DefaultTimeWheel(tick, wheelSize, defaultExecutor);
+        return new DefaultTimeWheel(DEFAULT_NAME, tick, wheelSize, 5L * 60 * 1000, defaultExecutor);
     }
 
     /**
