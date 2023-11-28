@@ -100,4 +100,16 @@ public interface TimeWheel {
      * @param key 唯一键
      */
     void cancel(long key);
+
+    /**
+     * 删除执行任务（包括幂等缓存）
+     *
+     * @param key 唯一键
+     */
+    void delete(long key);
+
+    /**
+     * 终止时间轮盘任务
+     */
+    void terminate();
 }

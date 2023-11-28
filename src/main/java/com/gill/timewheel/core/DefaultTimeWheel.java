@@ -17,8 +17,10 @@ import java.util.concurrent.TimeUnit;
 
 import com.gill.timewheel.NamedThreadFactory;
 import com.gill.timewheel.TimeWheel;
+import com.gill.timewheel.exception.TimeWheelTerminatedException;
 import com.gill.timewheel.log.ILogger;
 import com.gill.timewheel.log.LoggerFactory;
+import com.gill.timewheel.util.Utils;
 
 /**
  * DefaultTimeWheel
@@ -86,6 +88,8 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
      * 执行的索引位置
      */
     private int tickIdx = 0;
+
+    private volatile boolean running = true;
 
     DefaultTimeWheel(long tick, int wheelSize, ExecutorService defaultTaskExecutor) {
         this(DEFAULT_NAME, tick, wheelSize, 5L * 60 * 1000, defaultTaskExecutor);
@@ -258,6 +262,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
     @Override
     public void executeAtTime(long key, long executeTime, ExecutorService executor, String taskName,
         Runnable runnable) {
+        checkState();
         long now = Instant.now().toEpochMilli();
         long diff = executeTime - sts;
         long term = diff / period;
@@ -322,10 +327,42 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
      */
     @Override
     public void cancel(long key) {
+        checkState();
         Task task = taskCache.get(key);
         if (task != null) {
             log.info("timewheel {} cancels task: {}", name, key);
             task.cancel();
+        }
+    }
+
+    /**
+     * 删除执行任务（包括幂等缓存）
+     *
+     * @param key 唯一键
+     */
+    @Override
+    public void delete(long key) {
+        checkState();
+        Task task = taskCache.remove(key);
+        if (task != null) {
+            log.info("timewheel {} cancels task: {}", name, key);
+            task.cancel();
+        }
+    }
+
+    /**
+     * 终止时间轮盘任务
+     */
+    @Override
+    public void terminate() {
+        running = false;
+        executors.shutdown();
+        Utils.awaitTermination(executors, "timewheel-scheduler");
+    }
+
+    private void checkState() {
+        if (!running) {
+            throw new TimeWheelTerminatedException("timewheel " + name + " is terminated");
         }
     }
 }

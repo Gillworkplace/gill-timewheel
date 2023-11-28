@@ -10,6 +10,7 @@ import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 
 import com.gill.timewheel.core.TimeWheelFactory;
+import com.gill.timewheel.exception.TimeWheelTerminatedException;
 
 /**
  * TimeWheelTest
@@ -21,6 +22,8 @@ public class TimeWheelTest {
 
     /**
      * 过期任务执行
+     * 
+     * @throws Exception ex
      */
     @Test
     public void testTaskExpired() throws Exception {
@@ -33,9 +36,11 @@ public class TimeWheelTest {
 
     /**
      * 幂等性任务执行
+     * 
+     * @throws Exception ex
      */
     @Test
-    public void testIdempotence() throws InterruptedException {
+    public void testIdempotence() throws Exception {
         AtomicInteger flag = new AtomicInteger(0);
         TimeWheel timeWheel = TimeWheelFactory.create(100, 10);
         long id = 1;
@@ -51,9 +56,11 @@ public class TimeWheelTest {
 
     /**
      * 一个时间轮盘周期内执行延迟任务
+     * 
+     * @throws Exception ex
      */
     @RepeatedTest(10)
-    public void testDelayInPeriod() throws InterruptedException {
+    public void testDelayInPeriod() throws Exception {
         AtomicInteger flag = new AtomicInteger(0);
         TimeWheel timeWheel = TimeWheelFactory.create(10, 10);
         timeWheel.executeWithDelay(0, "delay-0", () -> flag.accumulateAndGet(1, (x, old) -> x | old));
@@ -67,9 +74,11 @@ public class TimeWheelTest {
 
     /**
      * 多个时间轮盘周期执行延迟任务
+     * 
+     * @throws Exception ex
      */
     @RepeatedTest(10)
-    public void testDelayCrossPeriods() throws InterruptedException {
+    public void testDelayCrossPeriods() throws Exception {
         AtomicInteger flag = new AtomicInteger(0);
         TimeWheel timeWheel = TimeWheelFactory.create(10, 10);
         timeWheel.executeWithDelay(0, "delay-0", () -> flag.accumulateAndGet(1, (x, old) -> x | old));
@@ -83,9 +92,11 @@ public class TimeWheelTest {
 
     /**
      * 取消任务执行
+     * 
+     * @throws Exception ex
      */
     @Test
-    public void testCancelTask() throws InterruptedException {
+    public void testCancelTask() throws Exception {
         AtomicInteger flag = new AtomicInteger(0);
         TimeWheel timeWheel = TimeWheelFactory.create(10, 10);
         long task1 =
@@ -101,8 +112,13 @@ public class TimeWheelTest {
         Assertions.assertEquals(0, flag.get());
     }
 
+    /**
+     * 幂等缓存过期后相同key的任务可以再次执行
+     * 
+     * @throws Exception ex
+     */
     @Test
-    public void testIdempotenceExpired() throws InterruptedException {
+    public void testIdempotenceExpired() throws Exception {
         AtomicInteger flag = new AtomicInteger(0);
         TimeWheel timeWheel = TimeWheelFactory.create("default", 10, 10, 500);
         timeWheel.executeWithDelay(1, 0, "delay-0", () -> flag.accumulateAndGet(1, (x, old) -> x | old));
@@ -116,5 +132,25 @@ public class TimeWheelTest {
         Assertions.assertEquals(1 << 2, flag.get() & (1 << 2));
         Assertions.assertEquals(1 << 3, flag.get() & (1 << 3));
         Assertions.assertEquals(1 << 4, flag.get() & (1 << 4));
+    }
+
+    /**
+     * 关闭timewheel后再调用结果会抛异常
+     * 
+     * @throws Exception ex
+     */
+    @Test
+    public void testTermination() throws Exception {
+        AtomicInteger flag = new AtomicInteger(0);
+        TimeWheel timeWheel = TimeWheelFactory.create(10, 10);
+        timeWheel.executeWithDelay(0, "delay-0", () -> flag.accumulateAndGet(1, (x, old) -> x | old));
+        Thread.sleep(50);
+        timeWheel.terminate();
+        Assertions.assertThrowsExactly(TimeWheelTerminatedException.class,
+            () -> timeWheel.executeWithDelay(0, "delay-1", () -> flag.accumulateAndGet(1 << 1, (x, old) -> x | old)));
+        Assertions.assertThrowsExactly(TimeWheelTerminatedException.class, () -> timeWheel.cancel(1));
+        Assertions.assertThrowsExactly(TimeWheelTerminatedException.class, () -> timeWheel.delete(1));
+        Assertions.assertDoesNotThrow(timeWheel::terminate);
+        Assertions.assertEquals(1, flag.get());
     }
 }
