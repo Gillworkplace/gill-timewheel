@@ -22,11 +22,11 @@ import java.util.concurrent.ThreadPoolExecutor.AbortPolicy;
 import java.util.concurrent.ThreadPoolExecutor.DiscardPolicy;
 import java.util.concurrent.TimeUnit;
 
-import com.gill.timewheel.util.NamedThreadFactory;
 import com.gill.timewheel.TimeWheel;
 import com.gill.timewheel.exception.TimeWheelTerminatedException;
 import com.gill.timewheel.log.ILogger;
 import com.gill.timewheel.log.LoggerFactory;
+import com.gill.timewheel.util.NamedThreadFactory;
 import com.gill.timewheel.util.Utils;
 
 /**
@@ -329,15 +329,17 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
             }
         }
         log.debug("timewheel {} execute task {} right now", name, taskName, now);
-        executeNow(taskName, executor, runnable);
+
+        // 若延时任务已过期则在当前线程执行
+        executeSync(taskName, runnable);
     }
 
-    private static void executeNow(String taskName, ExecutorService executor, Runnable runnable) {
-        executor.execute(() -> {
-            log.info("[{}] start to execute task {}", Instant.now().toEpochMilli(), taskName);
-            runnable.run();
-            log.info("[{}] finish to execute task {}", Instant.now().toEpochMilli(), taskName);
-        });
+    private void executeSync(String taskName, Runnable runnable) {
+        RunnableWrapper.run(taskName, runnable);
+    }
+
+    private void executeAsync(String taskName, Runnable runnable) {
+        this.defaultTaskExecutor.execute(new RunnableWrapper(taskName, runnable));
     }
 
     private void registerRemoveTask(long key) {
@@ -358,7 +360,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
                 return;
             }
         }
-        executeNow(taskName, defaultTaskExecutor, remove);
+        executeAsync(taskName, remove);
     }
 
     /**

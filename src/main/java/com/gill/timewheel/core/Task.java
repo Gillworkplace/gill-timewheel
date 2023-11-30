@@ -1,6 +1,5 @@
 package com.gill.timewheel.core;
 
-import java.time.Instant;
 import java.util.concurrent.ExecutorService;
 
 import com.gill.timewheel.log.ILogger;
@@ -32,7 +31,7 @@ class Task {
         this.key = key;
         this.name = name;
         this.executorService = executorService;
-        this.runnable = runnable;
+        this.runnable = new RunnableWrapper(name, runnable);
         this.insertTime = insertTime;
     }
 
@@ -49,11 +48,7 @@ class Task {
     }
 
     public Runnable getRunnable() {
-        return () -> {
-            log.info("[{}] start to execute task {}", Instant.now().toEpochMilli(), getName());
-            runnable.run();
-            log.info("[{}] finish to execute task {}", Instant.now().toEpochMilli(), getName());
-        };
+        return runnable;
     }
 
     public long getInsertTime() {
