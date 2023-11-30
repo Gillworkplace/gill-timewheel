@@ -22,7 +22,7 @@ import java.util.concurrent.ThreadPoolExecutor.AbortPolicy;
 import java.util.concurrent.ThreadPoolExecutor.DiscardPolicy;
 import java.util.concurrent.TimeUnit;
 
-import com.gill.timewheel.NamedThreadFactory;
+import com.gill.timewheel.util.NamedThreadFactory;
 import com.gill.timewheel.TimeWheel;
 import com.gill.timewheel.exception.TimeWheelTerminatedException;
 import com.gill.timewheel.log.ILogger;
