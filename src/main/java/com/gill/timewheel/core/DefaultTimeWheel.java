@@ -45,6 +45,8 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
     private static final SecureRandom RANDOM;
 
+    private static final String REMOVE_TASK_PREFIX = "remove-";
+
     static {
         try {
             RANDOM = SecureRandom.getInstanceStrong();
@@ -347,7 +349,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         long diff = expiredTime - sts;
         long term = diff / period;
         int tickIdx = (int)(diff % period / tick);
-        String taskName = "remove-" + key;
+        String taskName = REMOVE_TASK_PREFIX + key;
         Runnable remove = () -> taskCache.remove(key);
         if (diff > 0) {
             Wheel wheel = wheels.computeIfAbsent(term, t -> new Wheel(wheelSize));
