@@ -9,7 +9,6 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -32,9 +31,7 @@ public class PerformanceTest {
         ScheduledExecutorService executor =
             new ScheduledThreadPoolExecutor(1, new NamedThreadFactory("schedule-test", true));
         final int delay = 10;
-        executor.scheduleAtFixedRate(() -> {
-            System.out.println("schedule time: " + Instant.now().toEpochMilli() % 1000);
-        }, 0, delay, TimeUnit.MILLISECONDS);
+        executor.scheduleAtFixedRate(() -> System.out.println("schedule time: " + Instant.now().toEpochMilli() % 1000), 0, delay, TimeUnit.MILLISECONDS);
         Thread.sleep(1000);
     }
 
