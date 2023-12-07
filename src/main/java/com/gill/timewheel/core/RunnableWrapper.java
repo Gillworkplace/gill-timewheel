@@ -1,7 +1,5 @@
 package com.gill.timewheel.core;
 
-import java.time.Instant;
-
 import com.gill.timewheel.log.ILogger;
 import com.gill.timewheel.log.LoggerFactory;
 
@@ -30,8 +28,8 @@ public class RunnableWrapper implements Runnable {
     }
 
     public static void run(String taskName, Runnable runnable) {
-        log.info("[{}] start to execute task {}", Instant.now().toEpochMilli(), taskName);
+        log.debug("start to execute task {}", taskName);
         runnable.run();
-        log.info("[{}] finish to execute task {}", Instant.now().toEpochMilli(), taskName);
+        log.debug("finish to execute task {}", taskName);
     }
 }

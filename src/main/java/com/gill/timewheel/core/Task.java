@@ -1,9 +1,7 @@
 package com.gill.timewheel.core;
 
 import java.util.concurrent.ExecutorService;
-
-import com.gill.timewheel.log.ILogger;
-import com.gill.timewheel.log.LoggerFactory;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Task
@@ -13,26 +11,27 @@ import com.gill.timewheel.log.LoggerFactory;
  **/
 class Task {
 
-    private static final ILogger log = LoggerFactory.getLogger(Task.class);
-
     private final long key;
 
     private final String name;
+
+    private final long wheelIdx;
+
+    private final int tickIdx;
 
     private final ExecutorService executorService;
 
     private final Runnable runnable;
 
-    private final long insertTime;
+    private final AtomicBoolean cancel = new AtomicBoolean(false);
 
-    private volatile boolean cancel = false;
-
-    public Task(long key, String name, ExecutorService executorService, Runnable runnable, long insertTime) {
+    public Task(long key, String name, long wheelIdx, int tickIdx, ExecutorService executorService, Runnable runnable) {
         this.key = key;
         this.name = name;
+        this.wheelIdx = wheelIdx;
+        this.tickIdx = tickIdx;
         this.executorService = executorService;
         this.runnable = new RunnableWrapper(name, runnable);
-        this.insertTime = insertTime;
     }
 
     public long getKey() {
@@ -43,6 +42,14 @@ class Task {
         return name;
     }
 
+    public long getWheelIdx() {
+        return wheelIdx;
+    }
+
+    public int getTickIdx() {
+        return tickIdx;
+    }
+
     public ExecutorService getExecutorService() {
         return executorService;
     }
@@ -51,15 +58,11 @@ class Task {
         return runnable;
     }
 
-    public long getInsertTime() {
-        return insertTime;
-    }
-
     public boolean isCancel() {
-        return cancel;
+        return cancel.get();
     }
 
-    public void cancel() {
-        this.cancel = true;
+    public boolean cancel() {
+        return this.cancel.compareAndSet(false, true);
     }
 }

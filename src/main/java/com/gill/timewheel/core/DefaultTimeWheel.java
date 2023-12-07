@@ -8,19 +8,19 @@ import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionHandler;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor.AbortPolicy;
 import java.util.concurrent.ThreadPoolExecutor.DiscardPolicy;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import com.gill.timewheel.TimeWheel;
 import com.gill.timewheel.exception.TimeWheelTerminatedException;
@@ -39,7 +39,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
     private static final ILogger log = LoggerFactory.getLogger(DefaultTimeWheel.class);
 
-    private static final RejectedExecutionHandler EXECUTE_POLICY = new AbortPolicy();
+    private static final RejectedExecutionHandler EVENT_LOOP_POLICY = new AbortPolicy();
 
     private static final RejectedExecutionHandler CLEANER_POLICY = new DiscardPolicy();
 
@@ -57,26 +57,37 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
     private final String name;
 
+    /**
+     * 轮盘刻度周期
+     */
     private final long tick;
 
+    /**
+     * 轮盘大小
+     */
     private final int wheelSize;
 
+    /**
+     * period = tick * wheelSize
+     */
     private final long period;
 
     /**
-     * start timestamp
+     * start time 与 tick wheelSize period triggerTime的关系 triggerTime = sts + period * wIdx + tIdx * tick
      */
-    private final long sts;
+    private final long stt;
 
     /**
      * 幂等缓存的过期时间 ms
      */
     private final long expired;
 
+    private final Config config;
+
     /**
      * 轮盘
      */
-    private final ConcurrentSkipListMap<Long, Wheel> wheels = new ConcurrentSkipListMap<>();
+    private final Map<Long, Wheel> wheels = new ConcurrentHashMap<>();
 
     /**
      * 任务缓存
@@ -88,79 +99,141 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
      */
     private final ReferenceQueue<Object> rq = new ReferenceQueue<>();
 
-    private final ScheduledExecutorService executors =
-        new ScheduledThreadPoolExecutor(1, new NamedThreadFactory("timewheel-main", true), EXECUTE_POLICY);
+    /**
+     * tick调度器
+     */
+    private final ExecutorService eventLoop = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
+        new SynchronousQueue<>(), new NamedThreadFactory("timewheel-main", true), EVENT_LOOP_POLICY);
 
+    /**
+     * 用于清理幂等任务缓存
+     */
     private final ExecutorService cleaner = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
         new SynchronousQueue<>(), new NamedThreadFactory("timewheel-cleaner", true), CLEANER_POLICY);
 
     private final ExecutorService defaultTaskExecutor;
 
-    /**
-     * 时间轮盘任期
-     */
-    private long term = 0;
+    private final Lock lock = new ReentrantLock();
 
-    /**
-     * 执行的索引位置
-     */
-    private int tickIdx = 0;
+    private final Condition available = lock.newCondition();
 
     private volatile boolean running = true;
 
-    DefaultTimeWheel(String name, long tick, int wheelSize, long expired, ExecutorService defaultTaskExecutor) {
+    private final NearlyTask nearlyTask = new NearlyTask();
+
+    private final AtomicInteger taskCnt = new AtomicInteger(0);
+
+    DefaultTimeWheel(String name, long tick, int wheelSize, long expired, Config config,
+        ExecutorService defaultTaskExecutor) {
         this.name = name;
         this.tick = tick;
         this.wheelSize = wheelSize;
         this.expired = expired;
+        this.config = config;
         this.period = tick * wheelSize;
         this.defaultTaskExecutor = defaultTaskExecutor;
-        this.sts = Instant.now().toEpochMilli();
+        this.stt = getNow();
 
         // 启动定时器
-        this.executors.scheduleAtFixedRate(this, 0, tick, TimeUnit.MILLISECONDS);
+        this.eventLoop.execute(this);
+    }
+
+    private static long getNow() {
+        return (System.nanoTime() + 999999) / 1000000;
     }
 
     @Override
     public void run() {
-        try {
-            final long t = term;
-            final int ti = tickIdx;
-            incr();
-            Wheel wheel = wheels.computeIfAbsent(t, key -> new Wheel(wheelSize));
+        while (running) {
+            long now = getNow();
             cleanAsync();
-            List<Task> tasks = wheel.getAndClearTasks(ti);
-            if (tasks.isEmpty()) {
-                return;
-            }
-            log.debug("start to execute wheel that term is {} and tickIdx is {}", t, ti);
-            for (Task task : tasks) {
-                ExecutorService executor = task.getExecutorService();
-                Runnable run = task.getRunnable();
-                if (task.isCancel()) {
+            lock.lock();
+            try {
+
+                // 没有任务时直接长期阻塞
+                if (taskCnt.get() == 0) {
+                    available.await();
+                    System.out.println("start");
                     continue;
                 }
-                executor.execute(taskRunnableWrapper(task.getKey(), run));
+                long triggerTime = nearlyTask.getTriggerTime();
+                long diff = triggerTime - now;
+
+                // 没有需要执行的任务任务 进入等待
+                if (diff > 0) {
+                    available.await(diff, TimeUnit.MILLISECONDS);
+                    System.out.println("wake up");
+                    continue;
+                }
+                System.out.println("schedule time: " + now % 1000);
+                int tIdx = nearlyTask.getTickIdx();
+                long wIdx = nearlyTask.getWheelIdx();
+                fireTasks(wIdx, tIdx);
+                findNextNearlyTask(wIdx, tIdx);
+            } catch (InterruptedException e) {
+                log.error("timewheel is interrupted, e: {}", e.toString());
+                break;
+            } finally {
+                lock.unlock();
             }
-        } catch (Exception e) {
-            log.error("timewheel {} occur exception: {}", name, e.getMessage());
         }
+    }
+
+    private void findNextNearlyTask(long wIdx, int tIdx) {
+        nearlyTask.reset();
+        long maxWaitTick = config.getMaxWaitTick();
+        maxWaitTick = maxWaitTick < 0 ? wheelSize : maxWaitTick;
+        long wi = wIdx;
+        int ti = tIdx;
+        for (int i = 1; i <= maxWaitTick; i++) {
+            if (++ti == wheelSize) {
+                ti = 0;
+                wi++;
+            }
+            Wheel wheel = wheels.get(wi);
+            if (wheel != null && wheel.containsTask(ti)) {
+                nearlyTask.setNearlyTask(wi, ti, wi * period + ti * tick + stt);
+                return;
+            }
+
+            // 如果轮盘也没有直接跳过这些tickIdx的处理
+            if (wheel == null) {
+                i += wheelSize - ti - 1;
+                ti = 0;
+                wi++;
+            }
+        }
+
+        // 找不到则设置最小值等待周期
+        nearlyTask.setNearlyTask(wi, ti, wi * period + ti * tick + stt);
+    }
+
+    private void fireTasks(long wIdx, int tIdx) {
+        Wheel wheel = wheels.get(wIdx);
+        if (wheel == null) {
+            log.warn("wheel {} is disappeared", wIdx);
+            return;
+        }
+        List<Task> tasks = wheel.getAndClearTasks(tIdx);
+        if (tasks.isEmpty()) {
+            return;
+        }
+        log.debug("fire wheels[{}][{}]'s tasks", wIdx, tIdx);
+        int cnt = 0;
+        for (Task task : tasks) {
+            ExecutorService executor = task.getExecutorService();
+            Runnable run = task.getRunnable();
+            if (task.isCancel()) {
+                continue;
+            }
+            cnt++;
+            executor.execute(taskRunnableWrapper(task.getKey(), run));
+        }
+        assert taskCnt.addAndGet(-cnt) >= 0;
     }
 
     private void cleanAsync() {
-        cleaner.execute(() -> {
-            discardsOldWheel();
-            removeUselessTask();
-        });
-    }
-
-    private void discardsOldWheel() {
-        Entry<Long, Wheel> entry;
-        while ((entry = wheels.firstEntry()) != null && entry.getKey() < term) {
-            long key = entry.getKey();
-            wheels.remove(key);
-            log.trace("timewheel {} discards wheel-{}", name, key);
-        }
+        cleaner.execute(this::removeUselessTask);
     }
 
     private Runnable taskRunnableWrapper(long key, Runnable runnable) {
@@ -181,12 +254,6 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
             long key = ((TaskWrapper)ref).getKey();
             taskCache.remove(key);
         }
-    }
-
-    private void incr() {
-        tickIdx += 1;
-        term += tickIdx / wheelSize;
-        tickIdx = tickIdx % wheelSize;
     }
 
     /**
@@ -242,8 +309,8 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
      */
     @Override
     public void executeWithDelay(long key, long delay, ExecutorService executor, String taskName, Runnable runnable) {
-        long executeTime = Instant.now().toEpochMilli() + delay;
-        executeAtTime(key, executeTime, executor, taskName, runnable);
+        checkState();
+        internalExecute(key, delay, executor, taskName, runnable);
     }
 
     /**
@@ -302,12 +369,19 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
     @Override
     public void executeAtTime(long key, long executeTime, ExecutorService executor, String taskName,
         Runnable runnable) {
-        checkState();
-        long now = Instant.now().toEpochMilli();
-        long diff = executeTime - sts;
-        long term = diff / period;
-        int tickIdx = (int)(diff % period / tick);
-        Task task = new Task(key, taskName, executor, runnable, now);
+        long delay = executeTime - Instant.now().toEpochMilli();
+        executeWithDelay(key, delay, executor, taskName, runnable);
+    }
+
+    private void internalExecute(long key, long delay, ExecutorService executor, String taskName, Runnable runnable) {
+        long now = getNow();
+        long triggerTime = now + delay;
+        long diff = triggerTime - stt;
+        long dT = diff / tick * tick;
+        long wIdx = dT / period;
+        int tIdx = (int)(dT % period / tick);
+        long tT = dT + stt;
+        Task task = new Task(key, taskName, wIdx, tIdx, executor, runnable);
         TaskWrapper taskWrapper = new TaskWrapper(task, rq);
 
         // 幂等性校验
@@ -320,11 +394,9 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         registerRemoveTask(key);
 
         // 将任务添加到轮盘中
-        if (diff > 0 && executeTime > now) {
-            Wheel wheel = wheels.computeIfAbsent(term, t -> new Wheel(wheelSize));
-            if (wheel.addTask(tickIdx, task)) {
-                log.debug("insert time: {}, timewheel {} add task {} to the wheel that term is {} and tickIdx is {}",
-                    now, name, taskName, term, tickIdx);
+        // delay < tick的时候直接执行
+        if (dT > 0 && tT > now) {
+            if (addTaskToWheel(task, tT)) {
                 return;
             }
         }
@@ -332,6 +404,32 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
         // 若延时任务已过期则在当前线程执行
         executeSync(taskName, runnable);
+    }
+
+    private boolean addTaskToWheel(Task task, long tT) {
+        long wheelIdx = task.getWheelIdx();
+        int tickIdx = task.getTickIdx();
+        Wheel wheel = wheels.computeIfAbsent(wheelIdx, t -> new Wheel(wheelSize));
+        if (wheel.addTask(tickIdx, task)) {
+            log.debug("timewheel {} add task {} to the wheels[{}][{}]", name, task.getName(), wheelIdx, tickIdx);
+            taskCnt.incrementAndGet();
+            lock.lock();
+            try {
+
+                // 如果该任务为最近执行的任务则唤醒主线程重新计算睡眠时间
+                setNearlyTask(wheelIdx, tickIdx, tT);
+            } finally {
+                lock.unlock();
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private void setNearlyTask(long wIdx, int tIdx, long tT) {
+        if (nearlyTask.setNearlyTask(wIdx, tIdx, tT)) {
+            available.signal();
+        }
     }
 
     private void executeSync(String taskName, Runnable runnable) {
@@ -346,17 +444,18 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         if (expired <= 0) {
             return;
         }
-        long now = Instant.now().toEpochMilli();
+        long now = getNow();
         long expiredTime = expired + now;
-        long diff = expiredTime - sts;
-        long term = diff / period;
-        int tickIdx = (int)(diff % period / tick);
+        long diff = expiredTime - stt;
+        long dT = diff / tick * tick;
+        long wIdx = dT / period;
+        int tIdx = (int)(dT % period / tick);
+        long tT = dT + stt;
         String taskName = REMOVE_TASK_PREFIX + key;
         Runnable remove = () -> taskCache.remove(key);
-        if (diff > 0) {
-            Wheel wheel = wheels.computeIfAbsent(term, t -> new Wheel(wheelSize));
-            Task task = new Task(key, taskName, defaultTaskExecutor, remove, now);
-            if (wheel.addTask(tickIdx, task)) {
+        if (dT > 0 && tT > now) {
+            Task task = new Task(key, taskName, wIdx, tIdx, defaultTaskExecutor, remove);
+            if (addTaskToWheel(task, tT)) {
                 return;
             }
         }
@@ -372,9 +471,9 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
     public void cancel(long key) {
         checkState();
         Task task = Optional.ofNullable(taskCache.get(key)).map(WeakReference::get).orElse(null);
-        if (task != null) {
+        if (task != null && task.cancel()) {
             log.info("timewheel {} cancels task: {}", name, key);
-            task.cancel();
+            taskCnt.decrementAndGet();
         }
     }
 
@@ -387,9 +486,9 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
     public void delete(long key) {
         checkState();
         Task task = Optional.ofNullable(taskCache.remove(key)).map(WeakReference::get).orElse(null);
-        if (task != null) {
+        if (task != null && task.cancel()) {
             log.info("timewheel {} delete task: {}", name, key);
-            task.cancel();
+            taskCnt.decrementAndGet();
         }
     }
 
@@ -399,13 +498,63 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
     @Override
     public void terminate() {
         running = false;
-        executors.shutdown();
-        Utils.awaitTermination(executors, "timewheel-scheduler");
+        eventLoop.shutdownNow();
+        cleaner.shutdown();
+        Utils.awaitTermination(eventLoop, "timewheel-scheduler");
     }
 
     private void checkState() {
         if (!running) {
             throw new TimeWheelTerminatedException("timewheel " + name + " is terminated");
+        }
+    }
+
+    /**
+     * NearlyTask
+     *
+     * @author gill
+     * @version 2023/12/06
+     **/
+    static class NearlyTask {
+
+        private long wheelIdx;
+
+        private int tickIdx;
+
+        private long triggerTime;
+
+        public NearlyTask() {
+            this.wheelIdx = -1;
+            this.tickIdx = -1;
+            this.triggerTime = Long.MAX_VALUE;
+        }
+
+        public void reset() {
+            wheelIdx = -1;
+            tickIdx = -1;
+            triggerTime = Long.MAX_VALUE;
+        }
+
+        public boolean setNearlyTask(long wIdx, int tIdx, long tT) {
+            if (triggerTime <= tT) {
+                return false;
+            }
+            wheelIdx = wIdx;
+            tickIdx = tIdx;
+            triggerTime = tT;
+            return true;
+        }
+
+        public long getWheelIdx() {
+            return wheelIdx;
+        }
+
+        public int getTickIdx() {
+            return tickIdx;
+        }
+
+        public long getTriggerTime() {
+            return triggerTime;
         }
     }
 }

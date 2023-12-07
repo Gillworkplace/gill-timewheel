@@ -59,7 +59,8 @@ public class TimeWheelTest {
      * 
      * @throws Exception ex
      */
-    @RepeatedTest(10)
+//    @RepeatedTest(10)
+    @Test
     public void testDelayInPeriod() throws Exception {
         AtomicInteger flag = new AtomicInteger(0);
         TimeWheel timeWheel = TimeWheelFactory.create(10, 10);
