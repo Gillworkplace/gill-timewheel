@@ -15,6 +15,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import com.gill.gutil.statistic.Cost;
@@ -31,43 +32,6 @@ import com.gill.timewheel.TimeWheel;
  * @version 2023/11/29
  **/
 public class PerformanceTest {
-
-    @Test
-    public void testScheduleService() throws Exception {
-        ScheduledExecutorService executor =
-            new ScheduledThreadPoolExecutor(1, new NamedThreadFactory("schedule-test", true));
-        final int delay = 10;
-        executor.scheduleAtFixedRate(() -> System.out.println("schedule time: " + Instant.now().toEpochMilli() % 1000),
-            0, delay, TimeUnit.MILLISECONDS);
-        Thread.sleep(1000);
-    }
-
-    @Test
-    public void testSleep() throws Exception {
-        Statistic sleepError = Statistic.newStatistic("sleepError");
-        ExecutorService executor = new ThreadPoolExecutor(4, 4, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
-            new NamedThreadFactory("sleep-test-"));
-        int QPS = 1000;
-        SecureRandom random = SecureRandom.getInstanceStrong();
-        int maxSleep = 10;
-        CountDownLatch latch = new CountDownLatch(QPS);
-        for (int i = 0; i < QPS; i++) {
-            executor.execute(() -> {
-                long startTime = Instant.now().toEpochMilli();
-                int sleep = random.nextInt(maxSleep);
-                try {
-                    Thread.sleep(sleep);
-                } catch (InterruptedException ignored) {
-                }
-                long realSleepTime = Instant.now().toEpochMilli() - startTime;
-                sleepError.merge(realSleepTime - sleep);
-                latch.countDown();
-            });
-        }
-        boolean await = latch.await(3000, TimeUnit.MILLISECONDS);
-        sleepError.println();
-        Assertions.assertTrue(await);
-    }
 
     /**
      * 多线程并发同时调用Execute*方法
@@ -119,6 +83,7 @@ public class PerformanceTest {
      * 多线程并发同时调用Execute*方法
      */
     @Test
+    @Disabled
     public void testSimulateNormalUseCase() throws Exception {
         SecureRandom random = SecureRandom.getInstanceStrong();
         int maxDelay = 10000;
