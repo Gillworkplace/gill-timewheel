@@ -1,7 +1,9 @@
-package com.gill.timewheel;
+package com.gill.timewheel.core;
 
+import com.gill.gutil.statistic.Statistic;
 import java.security.SecureRandom;
 import java.time.Instant;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -9,14 +11,16 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import com.gill.timewheel.core.TimeWheelFactory;
-import com.gill.timewheel.statistic.Cost;
-import com.gill.timewheel.statistic.Counter;
-import com.gill.timewheel.util.NamedThreadFactory;
+import com.gill.gutil.statistic.Cost;
+import com.gill.gutil.statistic.Counter;
+import com.gill.gutil.thread.NamedThreadFactory;
+import com.gill.timewheel.TestUtil;
+import com.gill.timewheel.TimeWheel;
 
 /**
  * PerformanceTest
@@ -31,13 +35,14 @@ public class PerformanceTest {
         ScheduledExecutorService executor =
             new ScheduledThreadPoolExecutor(1, new NamedThreadFactory("schedule-test", true));
         final int delay = 10;
-        executor.scheduleAtFixedRate(() -> System.out.println("schedule time: " + Instant.now().toEpochMilli() % 1000), 0, delay, TimeUnit.MILLISECONDS);
+        executor.scheduleAtFixedRate(() -> System.out.println("schedule time: " + Instant.now().toEpochMilli() % 1000),
+            0, delay, TimeUnit.MILLISECONDS);
         Thread.sleep(1000);
     }
 
     @Test
     public void testSleep() throws Exception {
-        Cost sleepError = Cost.newStatistic("sleepError");
+        Statistic sleepError = Statistic.newStatistic("sleepError");
         ExecutorService executor = new ThreadPoolExecutor(4, 4, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
             new NamedThreadFactory("sleep-test-"));
         int QPS = 1000;
@@ -69,10 +74,10 @@ public class PerformanceTest {
     public void testAddDelayedTasksWith100ThreadsConcurrently() throws Exception {
         SecureRandom random = SecureRandom.getInstanceStrong();
         int maxDelay = 1000;
-        int QPS = 1000;
+        int QPS = 10000;
 
         CountDownLatch latch = new CountDownLatch(QPS);
-        ExecutorService executor = new ThreadPoolExecutor(32, 32, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
+        ExecutorService executor = new ThreadPoolExecutor(16, 16, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
             new NamedThreadFactory("performance-test-"));
         TimeWheel tw = TimeWheelFactory.create("ptest-timewheel", 10, 100, TimeWheelFactory.EXPIRED_BY_GC, executor);
 
@@ -80,11 +85,11 @@ public class PerformanceTest {
         // Thread.sleep(30000);
 
         Counter completeDelayTaskCounter = Counter.newCounter("completeDelayTaskCounter");
-        Cost addTaskCost = Cost.newStatistic("addTaskCost");
-        Cost delayError = Cost.newStatistic("delayError");
+        Statistic addTaskCost = Statistic.newStatistic("addTaskCost");
+        Statistic delayError = Statistic.newStatistic("delayError");
 
         for (int i = 0; i < QPS; i++) {
-            executor.execute(() -> Cost.cost(() -> {
+            executor.execute(() -> Cost.costMerge(() -> {
                 final long startTime = Instant.now().toEpochMilli();
                 int delay = random.nextInt(maxDelay);
                 tw.executeWithDelay(delay, "test", () -> {
@@ -101,5 +106,10 @@ public class PerformanceTest {
         delayError.println();
         Assertions.assertTrue(await);
         Assertions.assertEquals(QPS, completeDelayTaskCounter.get());
+
+        AtomicLong taskCnt = TestUtil.getField(tw, "taskCnt");
+        Assertions.assertEquals(0, taskCnt.get());
+        Map<Long, Wheel> wheels = TestUtil.getField(tw, "wheels");
+        Assertions.assertTrue(wheels.isEmpty());
     }
 }

@@ -5,38 +5,27 @@
 
   <groupId>com.gill</groupId>
   <artifactId>gill-timewheel</artifactId>
-  <version>0.0.1</version>
-  <build>
-    <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-compiler-plugin</artifactId>
-        <configuration>
-          <source>8</source>
-          <target>8</target>
-        </configuration>
-      </plugin>
-    </plugins>
-  </build>
+  <version>1.0.0</version>
   <packaging>jar</packaging>
 
   <name>gill-timewheel</name>
 
   <properties>
+    <maven.compiler.source>17</maven.compiler.source>
+    <maven.compiler.target>17</maven.compiler.target>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
 
   <dependencies>
     <dependency>
+      <groupId>com.gill</groupId>
+      <artifactId>gill-gutil</artifactId>
+      <version>1.0.0</version>
+    </dependency>
+    <dependency>
       <groupId>org.slf4j</groupId>
       <artifactId>slf4j-api</artifactId>
       <version>1.7.36</version>
-    </dependency>
-    <dependency>
-      <groupId>junit</groupId>
-      <artifactId>junit</artifactId>
-      <version>4.13.2</version>
-      <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.apache.logging.log4j</groupId>

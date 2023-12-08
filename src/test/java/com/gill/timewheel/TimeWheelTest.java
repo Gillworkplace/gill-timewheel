@@ -2,6 +2,7 @@ package com.gill.timewheel;
 
 import java.time.Instant;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -41,16 +42,16 @@ public class TimeWheelTest {
      */
     @Test
     public void testIdempotence() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
         AtomicInteger flag = new AtomicInteger(0);
         TimeWheel timeWheel = TimeWheelFactory.create(100, 10);
         long id = 1;
-        timeWheel.executeWithDelay(id, 0, "delay-1", flag::incrementAndGet);
-        Thread.sleep(10);
-        timeWheel.executeWithDelay(id, 50, "delay-1", flag::incrementAndGet);
-        timeWheel.executeWithDelay(id, 50, "delay-4", flag::incrementAndGet);
-        timeWheel.executeWithDelay(id, 60, "delay-2", flag::incrementAndGet);
-        timeWheel.executeWithDelay(id, 110, "delay-3", flag::incrementAndGet);
-        Thread.sleep(150);
+        timeWheel.executeWithDelay(id, 0, "delay-1", TestUtil.wrap(0, flag, latch));
+        timeWheel.executeWithDelay(id, 50, "delay-1", TestUtil.wrap(1, flag));
+        timeWheel.executeWithDelay(id, 50, "delay-4", TestUtil.wrap(2, flag));
+        timeWheel.executeWithDelay(id, 60, "delay-2", TestUtil.wrap(3, flag));
+        timeWheel.executeWithDelay(id, 110, "delay-3", TestUtil.wrap(4, flag));
+        Assertions.assertTrue(latch.await(3000, TimeUnit.MILLISECONDS));
         Assertions.assertEquals(1, flag.get());
     }
 
@@ -59,18 +60,18 @@ public class TimeWheelTest {
      * 
      * @throws Exception ex
      */
-//    @RepeatedTest(10)
-    @Test
+    @RepeatedTest(10)
     public void testDelayInPeriod() throws Exception {
+        CountDownLatch latch = new CountDownLatch(5);
         AtomicInteger flag = new AtomicInteger(0);
         TimeWheel timeWheel = TimeWheelFactory.create(10, 10);
-        timeWheel.executeWithDelay(0, "delay-0", () -> flag.accumulateAndGet(1, (x, old) -> x | old));
-        timeWheel.executeWithDelay(13, "delay-1", () -> flag.accumulateAndGet(1 << 1, (x, old) -> x | old));
-        timeWheel.executeWithDelay(17, "delay-2", () -> flag.accumulateAndGet(1 << 2, (x, old) -> x | old));
-        timeWheel.executeWithDelay(20, "delay-3", () -> flag.accumulateAndGet(1 << 3, (x, old) -> x | old));
-        timeWheel.executeWithDelay(35, "delay-4", () -> flag.accumulateAndGet(1 << 4, (x, old) -> x | old));
-        Thread.sleep(50);
-        Assertions.assertEquals((1 << 5) - 1, flag.get());
+        timeWheel.executeWithDelay(0, "delay-0", TestUtil.wrap(0, flag, latch));
+        timeWheel.executeWithDelay(13, "delay-1", TestUtil.wrap(1, flag, latch));
+        timeWheel.executeWithDelay(17, "delay-2", TestUtil.wrap(2, flag, latch));
+        timeWheel.executeWithDelay(20, "delay-3", TestUtil.wrap(3, flag, latch));
+        timeWheel.executeWithDelay(35, "delay-4", TestUtil.wrap(4, flag, latch));
+        Assertions.assertTrue(latch.await(3000, TimeUnit.MILLISECONDS));
+        Assertions.assertEquals(0b11111, flag.get());
     }
 
     /**
@@ -80,15 +81,16 @@ public class TimeWheelTest {
      */
     @RepeatedTest(10)
     public void testDelayCrossPeriods() throws Exception {
+        CountDownLatch latch = new CountDownLatch(5);
         AtomicInteger flag = new AtomicInteger(0);
         TimeWheel timeWheel = TimeWheelFactory.create(10, 10);
-        timeWheel.executeWithDelay(0, "delay-0", () -> flag.accumulateAndGet(1, (x, old) -> x | old));
-        timeWheel.executeWithDelay(100, "delay-1", () -> flag.accumulateAndGet(1 << 1, (x, old) -> x | old));
-        timeWheel.executeWithDelay(105, "delay-2", () -> flag.accumulateAndGet(1 << 2, (x, old) -> x | old));
-        timeWheel.executeWithDelay(120, "delay-3", () -> flag.accumulateAndGet(1 << 3, (x, old) -> x | old));
-        timeWheel.executeWithDelay(180, "delay-4", () -> flag.accumulateAndGet(1 << 4, (x, old) -> x | old));
-        Thread.sleep(250);
-        Assertions.assertEquals((1 << 5) - 1, flag.get());
+        timeWheel.executeWithDelay(0, "delay-0", TestUtil.wrap(0, flag, latch));
+        timeWheel.executeWithDelay(100, "delay-1", TestUtil.wrap(1, flag, latch));
+        timeWheel.executeWithDelay(105, "delay-2", TestUtil.wrap(2, flag, latch));
+        timeWheel.executeWithDelay(120, "delay-3", TestUtil.wrap(3, flag, latch));
+        timeWheel.executeWithDelay(180, "delay-4", TestUtil.wrap(4, flag, latch));
+        Assertions.assertTrue(latch.await(3000, TimeUnit.MILLISECONDS));
+        Assertions.assertEquals(0b11111, flag.get());
     }
 
     /**
@@ -98,18 +100,16 @@ public class TimeWheelTest {
      */
     @Test
     public void testCancelTask() throws Exception {
+        CountDownLatch latch = new CountDownLatch(3);
         AtomicInteger flag = new AtomicInteger(0);
         TimeWheel timeWheel = TimeWheelFactory.create(10, 10);
-        long task1 =
-            timeWheel.executeWithDelay(50, "delay-0", () -> flag.accumulateAndGet(1 << 1, (x, old) -> x | old));
-        long task2 =
-            timeWheel.executeWithDelay(100, "delay-1", () -> flag.accumulateAndGet(1 << 2, (x, old) -> x | old));
-        long task3 =
-            timeWheel.executeWithDelay(120, "delay-2", () -> flag.accumulateAndGet(1 << 3, (x, old) -> x | old));
+        long task1 = timeWheel.executeWithDelay(50, "delay-0", TestUtil.wrap(0, flag, latch));
+        long task2 = timeWheel.executeWithDelay(100, "delay-1", TestUtil.wrap(1, flag, latch));
+        long task3 = timeWheel.executeWithDelay(120, "delay-2", TestUtil.wrap(2, flag, latch));
         timeWheel.cancel(task1);
         timeWheel.cancel(task2);
         timeWheel.cancel(task3);
-        Thread.sleep(250);
+        Assertions.assertFalse(latch.await(500, TimeUnit.MILLISECONDS));
         Assertions.assertEquals(0, flag.get());
     }
 
@@ -120,19 +120,17 @@ public class TimeWheelTest {
      */
     @Test
     public void testIdempotenceExpired_specific() throws Exception {
+        CountDownLatch latch = new CountDownLatch(4);
         AtomicInteger flag = new AtomicInteger(0);
         TimeWheel timeWheel = TimeWheelFactory.create("default", 10, 10, 500);
-        timeWheel.executeWithDelay(1, 0, "delay-0", () -> flag.accumulateAndGet(1, (x, old) -> x | old));
-        timeWheel.executeWithDelay(1, 3, "delay-1", () -> flag.accumulateAndGet(1 << 1, (x, old) -> x | old));
-        timeWheel.executeWithDelay(2, 15, "delay-2", () -> flag.accumulateAndGet(1 << 2, (x, old) -> x | old));
+        timeWheel.executeWithDelay(1, 0, "delay-0", TestUtil.wrap(0, flag, latch));
+        timeWheel.executeWithDelay(1, 3, "delay-1", TestUtil.wrap(1, flag, latch));
+        timeWheel.executeWithDelay(2, 15, "delay-2", TestUtil.wrap(2, flag, latch));
         Thread.sleep(600);
-        timeWheel.executeWithDelay(1, 0, "delay-3", () -> flag.accumulateAndGet(1 << 3, (x, old) -> x | old));
-        timeWheel.executeWithDelay(2, 13, "delay-4", () -> flag.accumulateAndGet(1 << 4, (x, old) -> x | old));
-        Thread.sleep(50);
-        Assertions.assertEquals(1, flag.get() & 1);
-        Assertions.assertEquals(1 << 2, flag.get() & (1 << 2));
-        Assertions.assertEquals(1 << 3, flag.get() & (1 << 3));
-        Assertions.assertEquals(1 << 4, flag.get() & (1 << 4));
+        timeWheel.executeWithDelay(1, 0, "delay-3", TestUtil.wrap(3, flag, latch));
+        timeWheel.executeWithDelay(2, 13, "delay-4", TestUtil.wrap(4, flag, latch));
+        Assertions.assertTrue(latch.await(3000, TimeUnit.MILLISECONDS));
+        Assertions.assertEquals(0b11101, flag.get());
     }
 
     /**
@@ -149,17 +147,15 @@ public class TimeWheelTest {
             flag.accumulateAndGet(1, (x, old) -> x | old);
             cf.complete(1);
         });
-        timeWheel.executeWithDelay(1, 50, "delay-1", () -> flag.accumulateAndGet(1 << 1, (x, old) -> x | old));
+        timeWheel.executeWithDelay(1, 50, "delay-1", TestUtil.wrap(1, flag));
         cf.get();
         Thread.sleep(500);
 
         // gc触发后回收
         System.gc();
         Thread.sleep(100);
-        timeWheel.executeWithDelay(1, 0, "delay-2", () -> flag.accumulateAndGet(1 << 2, (x, old) -> x | old));
-        Assertions.assertEquals(1, flag.get() & 1);
-        Assertions.assertEquals(0, flag.get() & (1 << 1));
-        Assertions.assertEquals(1 << 2, flag.get() & (1 << 2));
+        timeWheel.executeWithDelay(1, 0, "delay-2", TestUtil.wrap(2, flag));
+        Assertions.assertEquals(0b101, flag.get() & 1);
     }
 
     /**
@@ -176,13 +172,11 @@ public class TimeWheelTest {
             flag.accumulateAndGet(1, (x, old) -> x | old);
             cf.complete(1);
         });
-        timeWheel.executeWithDelay(1, 10, "delay-1", () -> flag.accumulateAndGet(1 << 1, (x, old) -> x | old));
+        timeWheel.executeWithDelay(1, 10, "delay-1", TestUtil.wrap(1, flag));
         cf.get();
         Thread.sleep(100);
-        timeWheel.executeWithDelay(1, 0, "delay-2", () -> flag.accumulateAndGet(1 << 2, (x, old) -> x | old));
-        Assertions.assertEquals(1, flag.get() & 1);
-        Assertions.assertEquals(0, flag.get() & (1 << 1));
-        Assertions.assertEquals(1 << 2, flag.get() & (1 << 2));
+        timeWheel.executeWithDelay(1, 0, "delay-2", TestUtil.wrap(2, flag));
+        Assertions.assertEquals(0b101, flag.get());
     }
 
     /**
@@ -192,13 +186,14 @@ public class TimeWheelTest {
      */
     @Test
     public void testTermination() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
         AtomicInteger flag = new AtomicInteger(0);
         TimeWheel timeWheel = TimeWheelFactory.create(10, 10);
-        timeWheel.executeWithDelay(0, "delay-0", () -> flag.accumulateAndGet(1, (x, old) -> x | old));
-        Thread.sleep(50);
+        timeWheel.executeWithDelay(0, "delay-0", TestUtil.wrap(0, flag, latch));
+        Assertions.assertTrue(latch.await(3000, TimeUnit.MILLISECONDS));
         timeWheel.terminate();
         Assertions.assertThrowsExactly(TimeWheelTerminatedException.class,
-            () -> timeWheel.executeWithDelay(0, "delay-1", () -> flag.accumulateAndGet(1 << 1, (x, old) -> x | old)));
+            () -> timeWheel.executeWithDelay(0, "delay-1", TestUtil.wrap(1, flag)));
         Assertions.assertThrowsExactly(TimeWheelTerminatedException.class, () -> timeWheel.cancel(1));
         Assertions.assertThrowsExactly(TimeWheelTerminatedException.class, () -> timeWheel.delete(1));
         Assertions.assertDoesNotThrow(timeWheel::terminate);

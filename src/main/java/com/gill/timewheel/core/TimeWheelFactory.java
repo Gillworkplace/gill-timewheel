@@ -1,12 +1,12 @@
 package com.gill.timewheel.core;
 
+import com.gill.gutil.thread.NamedThreadFactory;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import com.gill.timewheel.TimeWheel;
-import com.gill.timewheel.util.NamedThreadFactory;
 
 /**
  * TimeWheelFactory 时间轮盘工厂

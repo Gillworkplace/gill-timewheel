@@ -1,7 +1,7 @@
 package com.gill.timewheel.core;
 
-import com.gill.timewheel.log.ILogger;
-import com.gill.timewheel.log.LoggerFactory;
+import com.gill.gutil.log.ILogger;
+import com.gill.gutil.log.LoggerFactory;
 
 /**
  * RunnableWrapper
