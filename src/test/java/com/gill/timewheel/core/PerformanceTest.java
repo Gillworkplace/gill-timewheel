@@ -77,25 +77,25 @@ public class PerformanceTest {
         int QPS = 10000;
 
         CountDownLatch latch = new CountDownLatch(QPS);
-        ExecutorService executor = new ThreadPoolExecutor(16, 16, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
-            new NamedThreadFactory("performance-test-"));
-        TimeWheel tw = TimeWheelFactory.create("ptest-timewheel", 10, 100, TimeWheelFactory.EXPIRED_BY_GC, executor);
-
-        // 等待arthas启动
-        // Thread.sleep(30000);
-
+        ExecutorService invoker = new ThreadPoolExecutor(4, 4, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
+            r -> new Thread(r, "invoker"));
+        ExecutorService executor = new ThreadPoolExecutor(4, 4, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
+            r -> new Thread(r, "executor"));
+        TimeWheel tw = TimeWheelFactory.create("ptest-timewheel", 10, 10, TimeWheelFactory.EXPIRED_BY_GC, executor);
         Counter completeDelayTaskCounter = Counter.newCounter("completeDelayTaskCounter");
         Statistic addTaskCost = Statistic.newStatistic("addTaskCost");
         Statistic delayError = Statistic.newStatistic("delayError");
 
+        Thread.sleep(1000);
+
         for (int i = 0; i < QPS; i++) {
-            executor.execute(() -> Cost.costMerge(() -> {
-                final long startTime = Instant.now().toEpochMilli();
+            invoker.execute(() -> Cost.costMerge(() -> {
+                final long startTime = System.nanoTime();
                 int delay = random.nextInt(maxDelay);
                 tw.executeWithDelay(delay, "test", () -> {
-                    long realDelay = Instant.now().toEpochMilli() - startTime;
+                    long realDelay = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);
                     long diff = realDelay - delay;
-                    delayError.merge(diff);
+                    delayError.merge(Math.abs(diff));
                     completeDelayTaskCounter.incr();
                     latch.countDown();
                 });
@@ -110,6 +110,6 @@ public class PerformanceTest {
         AtomicLong taskCnt = TestUtil.getField(tw, "taskCnt");
         Assertions.assertEquals(0, taskCnt.get());
         Map<Long, Wheel> wheels = TestUtil.getField(tw, "wheels");
-        Assertions.assertTrue(wheels.isEmpty());
+        Assertions.assertTrue(wheels.isEmpty() || wheels.size() == 1);
     }
 }

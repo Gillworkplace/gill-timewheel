@@ -217,3 +217,137 @@ public void demo() throws Exception {
 `timewheel`通过`Map<Long, Task> taskCache`记录所有提交的任务。用户可以通过设置`expired`参数来控制`taskCache`中对象的存活时间。过期的`taskCache`对象是也是通过`timewheel`进行延时删除的因此删除任务的时效性与普通的延时任务一致。
 
 当用户在设置了`expired`后，调用`execute`方法时实际上是在`timewheel`中提交两个延时任务，一个是用户定义的延时任务，一个是清除`taskCache`的过期对象。
+
+
+
+## Performace
+
+### netty timewheel性能
+
+#### 测试用例代码
+
+```java
+@Test
+public void testExecution() throws InterruptedException, NoSuchAlgorithmException {
+    SecureRandom random = SecureRandom.getInstanceStrong();
+    int maxDelay = 1000;
+    int QPS = 10000;
+    final CountDownLatch latch = new CountDownLatch(QPS);
+    ExecutorService invoker = new ThreadPoolExecutor(4, 4, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
+        r -> new Thread(r, "invoker"));
+    ExecutorService executor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
+        r -> new Thread(r, "executor"));
+
+    final HashedWheelTimer timer = new HashedWheelTimer(Executors.defaultThreadFactory(), 10, TimeUnit.MILLISECONDS,
+        32, true, 100000, executor);
+
+    Counter completeDelayTaskCounter = Counter.newCounter("completeDelayTaskCounter");
+    Cost addTaskCost = Cost.newStatistic("addTaskCost");
+    Cost delayError = Cost.newStatistic("delayError");
+    for (int i = 0; i < QPS; i++) {
+        invoker.execute(() -> Cost.cost(() -> {
+            final long startTime = System.nanoTime();
+            int delay = random.nextInt(maxDelay);
+            timer.newTimeout(to -> {
+                long realDelay = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);
+                long diff = realDelay - delay;
+                delayError.merge(Math.abs(diff));
+                completeDelayTaskCounter.incr();
+                latch.countDown();
+            }, delay, TimeUnit.MILLISECONDS);
+        }, addTaskCost));
+    }
+    boolean await = latch.await(10000, TimeUnit.MILLISECONDS);
+    addTaskCost.println();
+    delayError.println();
+    Assertions.assertTrue(await);
+    Assertions.assertEquals(QPS, completeDelayTaskCounter.get());
+    timer.stop();
+}
+```
+
+![image-20231208180120976](./../img/image-20231208180120976.png)
+
+CPU使用率峰值为5%
+
+![image-20231208180227526](./../img/image-20231208180227526.png)
+
+任务的执行误差上均值是5.9ms
+
+![image-20231208180341863](./../img/image-20231208180341863.png)
+
+tick中的任务延期到下一个tick执行的次数发生了219次（总共10000个并发延时任务）
+
+
+
+### timewheel性能
+
+#### 测试用例代码
+
+```java
+@Test
+public void testAddDelayedTasksWith100ThreadsConcurrently() throws Exception {
+    SecureRandom random = SecureRandom.getInstanceStrong();
+    int maxDelay = 1000;
+    int QPS = 10000;
+
+    CountDownLatch latch = new CountDownLatch(QPS);
+    ExecutorService invoker = new ThreadPoolExecutor(4, 4, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
+        r -> new Thread(r, "invoker"));
+    ExecutorService executor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
+        r -> new Thread(r, "executor"));
+    TimeWheel tw = TimeWheelFactory.create("ptest-timewheel", 10, 10, TimeWheelFactory.EXPIRED_BY_GC, executor);
+    Counter completeDelayTaskCounter = Counter.newCounter("completeDelayTaskCounter");
+    Statistic addTaskCost = Statistic.newStatistic("addTaskCost");
+    Statistic delayError = Statistic.newStatistic("delayError");
+
+    Thread.sleep(1000);
+
+    for (int i = 0; i < QPS; i++) {
+        invoker.execute(() -> Cost.costMerge(() -> {
+            final long startTime = System.nanoTime();
+            int delay = random.nextInt(maxDelay);
+            tw.executeWithDelay(delay, "test", () -> {
+                long realDelay = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);
+                long diff = realDelay - delay;
+                delayError.merge(Math.abs(diff));
+                completeDelayTaskCounter.incr();
+                latch.countDown();
+            });
+        }, addTaskCost));
+    }
+    boolean await = latch.await(10000, TimeUnit.MILLISECONDS);
+    addTaskCost.println();
+    delayError.println();
+    Assertions.assertTrue(await);
+    Assertions.assertEquals(QPS, completeDelayTaskCounter.get());
+
+    AtomicLong taskCnt = TestUtil.getField(tw, "taskCnt");
+    Assertions.assertEquals(0, taskCnt.get());
+    Map<Long, Wheel> wheels = TestUtil.getField(tw, "wheels");
+    Assertions.assertTrue(wheels.isEmpty() || wheels.size() == 1);
+}
+```
+
+![image-20231208175807094](./../img/image-20231208175807094.png)
+
+CPU使用率峰值为13%。
+
+![image-20231208180817001](./../img/image-20231208180817001.png)
+
+任务的执行误差上均值是4.1ms
+
+![image-20231208180847270](./../img/image-20231208180847270.png)
+
+tick中的任务延期到下一个tick执行的次数发生了37次（总共10000个并发延时任务）
+
+### 综合对比
+
+10000个短期（1s内）延时任务并发执行
+
+|                      | netty-timewheel | gtimewheel |
+| -------------------- | --------------- | ---------- |
+| 任务添加耗时         | 0.48            | **0.0029** |
+| 延时任务执行误差均值 | 5.9             | **4.1**    |
+| CPU峰值损耗          | **5%**          | 13%        |
+

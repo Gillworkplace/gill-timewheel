@@ -149,13 +149,12 @@ public class TimeWheelTest {
         });
         timeWheel.executeWithDelay(1, 50, "delay-1", TestUtil.wrap(1, flag));
         cf.get();
-        Thread.sleep(500);
 
         // gc触发后回收
         System.gc();
-        Thread.sleep(100);
+        Thread.sleep(500);
         timeWheel.executeWithDelay(1, 0, "delay-2", TestUtil.wrap(2, flag));
-        Assertions.assertEquals(0b101, flag.get() & 1);
+        Assertions.assertEquals(0b101, flag.get());
     }
 
     /**

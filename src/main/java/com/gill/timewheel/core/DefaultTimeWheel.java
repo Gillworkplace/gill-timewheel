@@ -152,14 +152,14 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
                 // 没有任务时进入阻塞状态
                 parkIfNoTask();
-                // System.out.println("schedule time: " + now % 1000);
                 long dT = now - stt;
                 long wIdx = dT / period;
                 int tIdx = (int)(dT % period / tick);
                 log.trace("fire (wheels[{}][{}], wheels[{}][{}]]'tasks", lastWheelIdx, lastTickIdx, wIdx, tIdx);
                 final long w = lastWheelIdx;
                 final int i = lastTickIdx;
-                Cost.cost(() -> fireTasks(w, i, wIdx, tIdx), "fire (wheels[{}][{}], wheels[{}][{}]]'tasks");
+                Cost.cost(() -> fireTasks(w, i, wIdx, tIdx),
+                    () -> String.format("fire (wheels[%d][%d], wheels[%d][%d]]'s tasks", w, i, wIdx, tIdx), 5);
                 lastWheelIdx = wIdx;
                 lastTickIdx = tIdx;
                 waitForNextTick(wIdx, tIdx);
@@ -174,15 +174,14 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         lock.lock();
         try {
             if (taskCnt.get() == 0) {
-                // System.out.println("await");
                 available.await();
-                // System.out.println("start");
             }
         } finally {
             lock.unlock();
         }
     }
 
+    @SuppressWarnings({"ResultOfMethodCallIgnored", "LoopStatementThatDoesntLoop"})
     private void waitForNextTick(long wIdx, long tIdx) throws InterruptedException {
         long deadline = wIdx * period + (tIdx + 1) * tick + this.stt;
         for (;;) {
@@ -224,10 +223,19 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
                 cnt++;
                 executor.execute(taskRunnableWrapper(task.getKey(), run));
             }
+
+            // 移除过期的wheel
+            removeIfWheelHasBeenExpired(ti, wi);
             assert taskCnt.addAndGet(-cnt) >= 0;
         }
         if (counter > 1) {
             log.warn("occur delay, counter: {}", counter);
+        }
+    }
+
+    private void removeIfWheelHasBeenExpired(int ti, long wi) {
+        if(ti == wheelSize - 1) {
+            wheels.remove(wi);
         }
     }
 
@@ -238,6 +246,8 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
     private Runnable taskRunnableWrapper(long key, Runnable runnable) {
         return () -> {
             runnable.run();
+
+            // EXPIRED_AFTER_EXECUTION 才执行
             if (expired == 0) {
                 taskCache.remove(key);
             }
