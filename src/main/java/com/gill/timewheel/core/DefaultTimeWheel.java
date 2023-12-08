@@ -18,9 +18,7 @@ import java.util.concurrent.ThreadPoolExecutor.AbortPolicy;
 import java.util.concurrent.ThreadPoolExecutor.DiscardPolicy;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.Condition;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.LockSupport;
 
 import com.gill.gutil.log.ILogger;
 import com.gill.gutil.log.LoggerFactory;
@@ -114,10 +112,6 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
     private final ExecutorService defaultTaskExecutor;
 
-    private final Lock lock = new ReentrantLock();
-
-    private final Condition available = lock.newCondition();
-
     private volatile boolean running = true;
 
     private final AtomicLong taskCnt = new AtomicLong(0);
@@ -151,7 +145,6 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
             try {
 
                 // 没有任务时进入阻塞状态
-                parkIfNoTask();
                 long dT = now - stt;
                 long wIdx = dT / period;
                 int tIdx = (int)(dT % period / tick);
@@ -170,29 +163,13 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         }
     }
 
-    private void parkIfNoTask() throws InterruptedException {
-        lock.lock();
-        try {
-            if (taskCnt.get() == 0) {
-                available.await();
-            }
-        } finally {
-            lock.unlock();
-        }
-    }
-
-    @SuppressWarnings({"ResultOfMethodCallIgnored", "LoopStatementThatDoesntLoop"})
+    @SuppressWarnings({"LoopStatementThatDoesntLoop"})
     private void waitForNextTick(long wIdx, long tIdx) throws InterruptedException {
         long deadline = wIdx * period + (tIdx + 1) * tick + this.stt;
         for (;;) {
             long waitTime = deadline - getNow();
             if (waitTime > 0) {
-                lock.lock();
-                try {
-                    available.await(waitTime, TimeUnit.MILLISECONDS);
-                } finally {
-                    lock.unlock();
-                }
+                LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(waitTime));
             }
             return;
         }
@@ -201,9 +178,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
     private void fireTasks(long lastWIdx, int lastTIdx, long wIdx, int tIdx) {
         long wi = lastWIdx + (lastTIdx + 1) / wheelSize;
         int ti = (lastTIdx + 1) % wheelSize;
-        int counter = 0;
         for (; wi < wIdx || wi == wIdx && ti <= tIdx; wi += (ti + 1) / wheelSize, ti = (ti + 1) % wheelSize) {
-            counter++;
             Wheel wheel = wheels.get(wi);
             if (wheel == null) {
                 continue;
@@ -228,13 +203,10 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
             removeIfWheelHasBeenExpired(ti, wi);
             assert taskCnt.addAndGet(-cnt) >= 0;
         }
-        if (counter > 1) {
-            log.warn("occur delay, counter: {}", counter);
-        }
     }
 
     private void removeIfWheelHasBeenExpired(int ti, long wi) {
-        if(ti == wheelSize - 1) {
+        if (ti == wheelSize - 1) {
             wheels.remove(wi);
         }
     }
@@ -419,13 +391,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         Wheel wheel = wheels.computeIfAbsent(wheelIdx, t -> new Wheel(wheelSize));
         if (wheel.addTask(tickIdx, task)) {
             log.debug("timewheel {} add task {} to the wheels[{}][{}]", name, task.getName(), wheelIdx, tickIdx);
-            lock.lock();
-            try {
-                taskCnt.incrementAndGet();
-                available.signal();
-            } finally {
-                lock.unlock();
-            }
+            taskCnt.incrementAndGet();
             return true;
         }
         return false;

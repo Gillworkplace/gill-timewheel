@@ -1,0 +1,37 @@
+@startuml
+'https://plantuml.com/activity-diagram-beta
+
+start
+  fork
+    :异步执行过期的幂等性key清除工作;
+  end fork
+#BLUE:taskCnt.get();
+if (taskCnt == 0) then (true)
+  #RED:LockSupport.park();
+  stop
+else (false)
+  :计算当前时间对应的wheelIdx和tickIdx;
+  :从lastWheelIdx, lastTickIdx开始遍历wheel;
+  :wi = lastWIdx + (lastTIdx + 1) / wheelSize
+  ti = (lastTIdx + 1) % wheelSize;
+  while (wi < wIdx || wi == wIdx && ti <= tIdx)
+    #BLUE:wheels获取wi的wheel轮盘
+    Wheel wheel = wheels.get(wi);
+    if (wheel != null) then (true)
+      #YELLOW:tasks = wheel.getAndClearTasks(ti);
+      :cnt = 0;
+      if (tasks不为空) then (true)
+        :遍历tasks;
+        :cnt++;
+        fork
+          :task异步执行;
+        end fork
+        #RED:taskCnt -= cnt;
+      end if
+    end if
+    :wi += (ti + 1) / wheelSize
+    ti = (ti + 1) % wheelSize;
+  end while
+end if
+stop
+@enduml

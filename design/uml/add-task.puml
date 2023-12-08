@@ -1,0 +1,39 @@
+@startuml
+'https://plantuml.com/activity-diagram-beta
+
+start
+:now = getNow()
+triggerTime = now + delay
+dT = (triggerTime - stt) / tick * tick
+wIdx = dT / period
+tIdx = (int)(dT % period / tick)
+tT = dT + stt;
+if (任务幂等性校验
+taskCache.computeIfAbsent
+(key, k -> taskWrapper) != taskWrapper) then (no)
+  :return;
+  note left: 返回的taskWrapper对象和\n设置的对象不是同一个对象\n说明该任务也被put过。
+  stop
+else (true)
+  :创建过期延时任务
+  Task task = new Task();
+  if(tT <= now + tick) then(true)
+    :当前线程同步执行延时任务;
+    stop
+  else (false)
+    #GREEN:wheels中原子性获取wheel
+    Wheel wheel = wheels.computeIfAbsent
+    (wheelIdx, t -> new Wheel(wheelSize));
+    #GREEN:原子性的向wheel中的idx位置创建linkedlist，
+    如果已存在list对象则返回原有的list对象;
+    if(判断wheel创建的list是否为linkedlist) then (true)
+      #GREEN:taskCnt++;
+      #RED:LockSupport.unpark(eventLoopThread);
+      stop
+    else (false)
+      :添加任务失败;
+      stop
+    endif
+  endif
+endif
+@enduml

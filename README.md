@@ -224,7 +224,9 @@ public void demo() throws Exception {
 
 ### netty timewheel性能
 
-#### 测试用例代码
+#### 10000个10ms延时任务瞬时提交，tick周期为10ms
+
+##### 测试用例代码
 
 ```java
 @Test
@@ -266,23 +268,100 @@ public void testExecution() throws InterruptedException, NoSuchAlgorithmExceptio
 }
 ```
 
-![image-20231208180120976](./../img/image-20231208180120976.png)
+##### 性能报告
 
-CPU使用率峰值为5%
+![image-20231208180120976](./../img/image-20231208180120976.png)
 
 ![image-20231208180227526](./../img/image-20231208180227526.png)
 
+CPU使用率峰值为5%
+
+添加任务耗时0.48ms
+
 任务的执行误差上均值是5.9ms
 
-![image-20231208180341863](./../img/image-20231208180341863.png)
+最大延时误差14ms
 
-tick中的任务延期到下一个tick执行的次数发生了219次（总共10000个并发延时任务）
+
+
+#### 10000个10s延时任务在1分钟内提交，tick周期为100ms
+
+##### 测试用例代码
+
+```java
+@Test
+public void testExecution2() throws Exception {
+    SecureRandom random = SecureRandom.getInstanceStrong();
+    int maxDelay = 10000;
+    int MPS = 10000;
+
+    CountDownLatch latch = new CountDownLatch(MPS);
+    ExecutorService invoker = new ThreadPoolExecutor(4, 4, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
+        r -> new Thread(r, "invoker"));
+    ExecutorService executor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
+        r -> new Thread(r, "executor"));
+
+    final HashedWheelTimer timer = new HashedWheelTimer(Executors.defaultThreadFactory(), 10, TimeUnit.MILLISECONDS,
+        32, true, 100000, executor);
+
+    Thread.sleep(1000);
+
+    Counter completeDelayTaskCounter = Counter.newCounter("completeDelayTaskCounter");
+    Cost addTaskCost = Cost.newStatistic("addTaskCost");
+    Cost delayError = Cost.newStatistic("delayError");
+
+    Thread.sleep(1000);
+    int surplus = MPS;
+    while (surplus > 0) {
+        int wt = random.nextInt(200);
+        Thread.sleep(wt);
+        int num = Math.min(surplus, random.nextInt(50));
+        for (int i = 0; i < num; i++) {
+            invoker.execute(() -> Cost.cost(() -> {
+                final long startTime = System.nanoTime();
+                int delay = random.nextInt(maxDelay);
+                timer.newTimeout(to -> {
+                    long realDelay = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);
+                    long diff = realDelay - delay;
+                    delayError.merge(Math.abs(diff));
+                    completeDelayTaskCounter.incr();
+                    latch.countDown();
+                }, delay, TimeUnit.MILLISECONDS);
+            }, addTaskCost));
+        }
+        surplus -= num;
+    }
+    System.out.println("add complete");
+    boolean await = latch.await(10000, TimeUnit.MILLISECONDS);
+    addTaskCost.println();
+    delayError.println();
+    Assertions.assertTrue(await);
+    Assertions.assertEquals(MPS, completeDelayTaskCounter.get());
+    timer.stop();
+}
+```
+
+##### 性能报告
+
+![image-20231208190635212](./../img/image-20231208190635212.png)
+
+![image-20231208190649458](./../img/image-20231208190649458.png)
+
+CPU使用率峰值为5%
+
+添加任务耗时0.47ms
+
+任务的执行误差上均值是50ms
+
+最大延时误差102ms
 
 
 
 ### timewheel性能
 
-#### 测试用例代码
+#### 10000个10ms延时任务瞬时提交，tick周期为10ms
+
+##### 测试用例代码
 
 ```java
 @Test
@@ -329,25 +408,102 @@ public void testAddDelayedTasksWith100ThreadsConcurrently() throws Exception {
 }
 ```
 
-![image-20231208175807094](./../img/image-20231208175807094.png)
+##### 性能报告
 
-CPU使用率峰值为13%。
+![image-20231208183102610](./../img/image-20231208183102610.png)
 
-![image-20231208180817001](./../img/image-20231208180817001.png)
+![image-20231208183122864](./../img/image-20231208183122864.png)
 
-任务的执行误差上均值是4.1ms
+CPU使用率峰值为9%。
 
-![image-20231208180847270](./../img/image-20231208180847270.png)
+添加任务的耗时为0.003ms
 
-tick中的任务延期到下一个tick执行的次数发生了37次（总共10000个并发延时任务）
+任务的执行误差上均值是4.8ms
+
+最大延时误差19ms
+
+
+
+#### 10000个10s延时任务在1分钟内提交，tick周期为100ms
+
+##### 测试用例代码
+
+```java
+@Test
+public void testSimulateNormalUseCase() throws Exception {
+    SecureRandom random = SecureRandom.getInstanceStrong();
+    int maxDelay = 10000;
+    int MPS = 10000;
+
+    CountDownLatch latch = new CountDownLatch(MPS);
+    ExecutorService invoker = new ThreadPoolExecutor(4, 4, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
+        r -> new Thread(r, "invoker"));
+    ExecutorService executor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
+        r -> new Thread(r, "executor"));
+
+    TimeWheel tw = TimeWheelFactory.create("ptest-timewheel", 100, 10, TimeWheelFactory.EXPIRED_BY_GC, executor);
+
+    Counter completeDelayTaskCounter = Counter.newCounter("completeDelayTaskCounter");
+    Statistic addTaskCost = Statistic.newStatistic("addTaskCost");
+    Statistic delayError = Statistic.newStatistic("delayError");
+
+    Thread.sleep(1000);
+    int surplus = MPS;
+    while (surplus > 0) {
+        int wt = random.nextInt(200);
+        Thread.sleep(wt);
+        int num = Math.min(surplus, random.nextInt(50));
+        for (int i = 0; i < num; i++) {
+            invoker.execute(() -> Cost.costMerge(() -> {
+                final long startTime = System.nanoTime();
+                int delay = random.nextInt(maxDelay);
+                tw.executeWithDelay(delay, "test", () -> {
+                    long realDelay = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startTime);
+                    long diff = realDelay - delay;
+                    delayError.merge(Math.abs(diff));
+                    completeDelayTaskCounter.incr();
+                    latch.countDown();
+                });
+            }, addTaskCost));
+        }
+        surplus -= num;
+    }
+    System.out.println("add complete");
+    boolean await = latch.await(20, TimeUnit.SECONDS);
+    addTaskCost.println();
+    delayError.println();
+    Assertions.assertTrue(await);
+    Assertions.assertEquals(MPS, completeDelayTaskCounter.get());
+
+    AtomicLong taskCnt = TestUtil.getField(tw, "taskCnt");
+    Assertions.assertEquals(0, taskCnt.get());
+    Map<Long, Wheel> wheels = TestUtil.getField(tw, "wheels");
+    Assertions.assertTrue(wheels.isEmpty() || wheels.size() == 1);
+}
+```
+
+##### 性能报告
+
+![image-20231208185708693](./../img/image-20231208185708693.png)
+
+![image-20231208185827835](./../img/image-20231208185827835.png)
+
+CPU使用率峰值为4%。
+
+添加任务的耗时为0.0013ms
+
+任务的执行误差上均值是50ms
+
+最大延时误差191ms
 
 ### 综合对比
 
-10000个短期（1s内）延时任务并发执行
+#### 短期延时任务并发执行
 
-|                      | netty-timewheel | gtimewheel |
-| -------------------- | --------------- | ---------- |
-| 任务添加耗时         | 0.48            | **0.0029** |
-| 延时任务执行误差均值 | 5.9             | **4.1**    |
-| CPU峰值损耗          | **5%**          | 13%        |
+|                          | netty-timewheel | gtimewheel |
+| ------------------------ | --------------- | ---------- |
+| 任务添加耗时(ms)         | 0.48            | **0.0029** |
+| 延时任务执行误差均值(ms) | 5.9             | **4.8**    |
+| CPU峰值损耗              | **5%**          | 9%         |
+| 最大延时误差(ms)         | **14**          | 17         |
 
