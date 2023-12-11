@@ -1,16 +1,22 @@
 package com.gill.timewheel.core;
 
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.PositiveOrZero;
+
 /**
  * Config
  *
  * @author gill
  * @version 2023/12/05
  **/
-class Config {
+public class TimeWheelConfig {
 
     /**
      * 核心线程数
      */
+    @Min(value = 1, message = "core thread num must be positive")
     private int coreThreadNum;
 
     /**
@@ -27,25 +33,15 @@ class Config {
     /**
      * 线程空闲时间
      */
+    @PositiveOrZero(message = "blocking queue size must be positive or zero")
     private long keepAlive = 5L * 60 * 1000;
 
     /**
      * 阻塞队列大小
      */
+    @Positive(message = "blocking queue size must be positive")
+    @Max(value = Integer.MAX_VALUE, message = "blocking queue size must less than Integer.MAX_VALUE")
     private int blockingQueueSize = Integer.MAX_VALUE;
-
-    /**
-     * 任务等待时间
-     */
-    private long maxWaitTick = -1L;
-
-    public long getMaxWaitTick() {
-        return maxWaitTick;
-    }
-
-    public void setMaxWaitTick(long maxWaitTick) {
-        this.maxWaitTick = maxWaitTick;
-    }
 
     public int getCoreThreadNum() {
         return coreThreadNum;
@@ -60,7 +56,7 @@ class Config {
     }
 
     public void setMaxThreadNum(int maxThreadNum) {
-        this.maxThreadNum = maxThreadNum;
+        this.maxThreadNum = Math.max(maxThreadNum, coreThreadNum);
     }
 
     public long getKeepAlive() {

@@ -1,11 +1,13 @@
 package com.gill.timewheel.core;
 
-import com.gill.gutil.thread.NamedThreadFactory;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
+import com.gill.gutil.check.ObjectUtil;
+import com.gill.gutil.thread.NamedThreadFactory;
+import com.gill.gutil.validation.ValidatorUtil;
 import com.gill.timewheel.TimeWheel;
 
 /**
@@ -22,7 +24,7 @@ public class TimeWheelFactory {
 
     public static final long EXPIRED_AFTER_EXECUTION = 0;
 
-    private static final Config DEFAULT_CONFIG = new Config();
+    private static final TimeWheelConfig DEFAULT_CONFIG = new TimeWheelConfig();
 
     static class DefaultTimeWheelExecutor {
         private static final ThreadPoolExecutor INSTANCE = new ThreadPoolExecutor(DEFAULT_CONFIG.getCoreThreadNum(),
@@ -50,7 +52,7 @@ public class TimeWheelFactory {
      * @return 时间轮盘
      */
     public static TimeWheel create(long tick, int wheelSize, ExecutorService defaultExecutor) {
-        return new DefaultTimeWheel(DEFAULT_NAME, tick, wheelSize, -1, DEFAULT_CONFIG, defaultExecutor);
+        return create(DEFAULT_NAME, tick, wheelSize, -1, defaultExecutor, DEFAULT_CONFIG);
     }
 
     /**
@@ -63,7 +65,7 @@ public class TimeWheelFactory {
      * @return 轮盘
      */
     public static TimeWheel create(String name, long tick, int wheelSize, long expired) {
-        return new DefaultTimeWheel(name, tick, wheelSize, expired, DEFAULT_CONFIG, DefaultTimeWheelExecutor.INSTANCE);
+        return create(name, tick, wheelSize, expired, DefaultTimeWheelExecutor.INSTANCE, DEFAULT_CONFIG);
     }
 
     /**
@@ -78,6 +80,30 @@ public class TimeWheelFactory {
      */
     public static TimeWheel create(String name, long tick, int wheelSize, long expired,
         ExecutorService defaultExecutor) {
-        return new DefaultTimeWheel(name, tick, wheelSize, expired, DEFAULT_CONFIG, defaultExecutor);
+        return create(name, tick, wheelSize, expired, defaultExecutor, DEFAULT_CONFIG);
+    }
+
+    /**
+     * 创建时间轮盘
+     *
+     * @param name 轮盘名称
+     * @param tick tick
+     * @param wheelSize 轮盘大小
+     * @param expired 幂等任务过期时间
+     * @param defaultExecutor 默认执行器
+     * @return 轮盘
+     */
+    public static TimeWheel create(String name, long tick, int wheelSize, long expired, ExecutorService defaultExecutor,
+        TimeWheelConfig config) {
+        ObjectUtil.checkNotNull(name, "name");
+        ObjectUtil.checkInRange(tick, 10L, 60000L, "tick");
+        ObjectUtil.checkInRange(wheelSize, 10, Integer.MAX_VALUE, "wheelSize");
+        ObjectUtil.checkInRange(expired, -1L, Long.MAX_VALUE, "expired");
+        ObjectUtil.checkNotNull(defaultExecutor, "executor");
+        String validateResult = ValidatorUtil.validateWithStr(config);
+        if (!validateResult.isEmpty()) {
+            throw new IllegalArgumentException(validateResult);
+        }
+        return new DefaultTimeWheel(name, tick, wheelSize, expired, config, defaultExecutor);
     }
 }

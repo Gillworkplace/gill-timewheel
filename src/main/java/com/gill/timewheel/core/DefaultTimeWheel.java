@@ -81,7 +81,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
      */
     private final long expired;
 
-    private final Config config;
+    private final TimeWheelConfig config;
 
     /**
      * 轮盘
@@ -116,7 +116,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
     private final AtomicLong taskCnt = new AtomicLong(0);
 
-    DefaultTimeWheel(String name, long tick, int wheelSize, long expired, Config config,
+    DefaultTimeWheel(String name, long tick, int wheelSize, long expired, TimeWheelConfig config,
         ExecutorService defaultTaskExecutor) {
         this.name = name;
         this.tick = tick;
