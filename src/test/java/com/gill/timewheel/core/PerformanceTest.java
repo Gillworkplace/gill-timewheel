@@ -40,9 +40,9 @@ public class PerformanceTest {
     public void testAddDelayedTasksWith100ThreadsConcurrently() throws Exception {
         SecureRandom random = SecureRandom.getInstanceStrong();
         int maxDelay = 1000;
-        int QPS = 10000;
+        int TPS = 10000;
 
-        CountDownLatch latch = new CountDownLatch(QPS);
+        CountDownLatch latch = new CountDownLatch(TPS);
         ExecutorService invoker = new ThreadPoolExecutor(4, 4, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
             r -> new Thread(r, "invoker"));
         ExecutorService executor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
@@ -54,7 +54,7 @@ public class PerformanceTest {
 
         Thread.sleep(1000);
 
-        for (int i = 0; i < QPS; i++) {
+        for (int i = 0; i < TPS; i++) {
             invoker.execute(() -> Cost.costMerge(() -> {
                 final long startTime = System.nanoTime();
                 int delay = random.nextInt(maxDelay);
@@ -71,7 +71,7 @@ public class PerformanceTest {
         addTaskCost.println();
         delayError.println();
         Assertions.assertTrue(await);
-        Assertions.assertEquals(QPS, completeDelayTaskCounter.get());
+        Assertions.assertEquals(TPS, completeDelayTaskCounter.get());
 
         AtomicLong taskCnt = TestUtil.getField(tw, "taskCnt");
         Assertions.assertEquals(0, taskCnt.get());
@@ -87,9 +87,9 @@ public class PerformanceTest {
     public void testSimulateNormalUseCase() throws Exception {
         SecureRandom random = SecureRandom.getInstanceStrong();
         int maxDelay = 10000;
-        int MPS = 10000;
+        int TPM = 10000;
 
-        CountDownLatch latch = new CountDownLatch(MPS);
+        CountDownLatch latch = new CountDownLatch(TPM);
         ExecutorService invoker = new ThreadPoolExecutor(4, 4, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
             r -> new Thread(r, "invoker"));
         ExecutorService executor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
@@ -102,7 +102,7 @@ public class PerformanceTest {
         Statistic delayError = Statistic.newStatistic("delayError");
 
         Thread.sleep(1000);
-        int surplus = MPS;
+        int surplus = TPM;
         while (surplus > 0) {
             int wt = random.nextInt(200);
             Thread.sleep(wt);
@@ -127,7 +127,7 @@ public class PerformanceTest {
         addTaskCost.println();
         delayError.println();
         Assertions.assertTrue(await);
-        Assertions.assertEquals(MPS, completeDelayTaskCounter.get());
+        Assertions.assertEquals(TPM, completeDelayTaskCounter.get());
 
         AtomicLong taskCnt = TestUtil.getField(tw, "taskCnt");
         Assertions.assertEquals(0, taskCnt.get());

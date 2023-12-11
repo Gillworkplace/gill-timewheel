@@ -7,7 +7,7 @@
 
 - 内存级别的异步处理延时任务 
 - 可对延时任务进行幂等性判断
-- 高性能（TODO）
+- 高性能
 - 自带metrics （TODO）
 
 
@@ -26,7 +26,38 @@
 
 ## Getting started
 
-通过`TimeWheelFactory`获取`TimeWheel`实例。
+### Dependency
+
+jdk版本：17
+
+```xml
+<!-- https://github.com/Gillworkplace/gill-gutil -->
+<dependency>
+  <groupId>com.gill</groupId>
+  <artifactId>gill-gutil</artifactId>
+  <version>1.0.0</version>
+</dependency>
+```
+
+
+
+### Demo
+
+```java
+public void demo() throws Exception {
+
+    // 创建一个扫描间隔为1s，一个周期为1分钟的时间轮盘
+    TimeWheel timeWheel = TimeWheelFactory.create(1000, 60);
+
+    // 在一分钟后执行
+    timeWheel.executeAtTime(Instant.now().toEpochMilli() + 60 * 1000, "task-1", () -> System.out.println("say hi"));
+
+    // 在一分钟后执行
+    timeWheel.executeWithDelay(60 * 1000, "task-2", () -> System.out.println("say hello"));
+}
+```
+
+
 
 ### TimeWheelFactory参数说明
 
@@ -186,24 +217,6 @@
 
 
 
-### demo
-
-```java
-public void demo() throws Exception {
-
-    // 创建一个扫描间隔为1s，一个周期为1分钟的时间轮盘
-    TimeWheel timeWheel = TimeWheelFactory.create(1000, 60);
-
-    // 在一分钟后执行
-    timeWheel.executeAtTime(Instant.now().toEpochMilli() + 60 * 1000, "task-1", () -> System.out.println("say hi"));
-
-    // 在一分钟后执行
-    timeWheel.executeWithDelay(60 * 1000, "task-2", () -> System.out.println("say hello"));
-}
-```
-
-
-
 ## Postscript
 
 ### 延时任务准确性
@@ -233,8 +246,8 @@ public void demo() throws Exception {
 public void testExecution() throws InterruptedException, NoSuchAlgorithmException {
     SecureRandom random = SecureRandom.getInstanceStrong();
     int maxDelay = 1000;
-    int QPS = 10000;
-    final CountDownLatch latch = new CountDownLatch(QPS);
+    int TPS = 10000;
+    final CountDownLatch latch = new CountDownLatch(TPS);
     ExecutorService invoker = new ThreadPoolExecutor(4, 4, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
         r -> new Thread(r, "invoker"));
     ExecutorService executor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
@@ -243,10 +256,12 @@ public void testExecution() throws InterruptedException, NoSuchAlgorithmExceptio
     final HashedWheelTimer timer = new HashedWheelTimer(Executors.defaultThreadFactory(), 10, TimeUnit.MILLISECONDS,
         32, true, 100000, executor);
 
+    Thread.sleep(1000);
+
     Counter completeDelayTaskCounter = Counter.newCounter("completeDelayTaskCounter");
     Cost addTaskCost = Cost.newStatistic("addTaskCost");
     Cost delayError = Cost.newStatistic("delayError");
-    for (int i = 0; i < QPS; i++) {
+    for (int i = 0; i < TPS; i++) {
         invoker.execute(() -> Cost.cost(() -> {
             final long startTime = System.nanoTime();
             int delay = random.nextInt(maxDelay);
@@ -263,7 +278,7 @@ public void testExecution() throws InterruptedException, NoSuchAlgorithmExceptio
     addTaskCost.println();
     delayError.println();
     Assertions.assertTrue(await);
-    Assertions.assertEquals(QPS, completeDelayTaskCounter.get());
+    Assertions.assertEquals(TPS, completeDelayTaskCounter.get());
     timer.stop();
 }
 ```
@@ -293,15 +308,15 @@ CPU使用率峰值为5%
 public void testExecution2() throws Exception {
     SecureRandom random = SecureRandom.getInstanceStrong();
     int maxDelay = 10000;
-    int MPS = 10000;
+    int TPM = 10000;
 
-    CountDownLatch latch = new CountDownLatch(MPS);
+    CountDownLatch latch = new CountDownLatch(TPM);
     ExecutorService invoker = new ThreadPoolExecutor(4, 4, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
         r -> new Thread(r, "invoker"));
     ExecutorService executor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
         r -> new Thread(r, "executor"));
 
-    final HashedWheelTimer timer = new HashedWheelTimer(Executors.defaultThreadFactory(), 10, TimeUnit.MILLISECONDS,
+    final HashedWheelTimer timer = new HashedWheelTimer(Executors.defaultThreadFactory(), 100, TimeUnit.MILLISECONDS,
         32, true, 100000, executor);
 
     Thread.sleep(1000);
@@ -311,7 +326,7 @@ public void testExecution2() throws Exception {
     Cost delayError = Cost.newStatistic("delayError");
 
     Thread.sleep(1000);
-    int surplus = MPS;
+    int surplus = TPM;
     while (surplus > 0) {
         int wt = random.nextInt(200);
         Thread.sleep(wt);
@@ -336,7 +351,7 @@ public void testExecution2() throws Exception {
     addTaskCost.println();
     delayError.println();
     Assertions.assertTrue(await);
-    Assertions.assertEquals(MPS, completeDelayTaskCounter.get());
+    Assertions.assertEquals(TPM, completeDelayTaskCounter.get());
     timer.stop();
 }
 ```
@@ -379,9 +394,9 @@ CPU使用率峰值为5%
 public void testAddDelayedTasksWith100ThreadsConcurrently() throws Exception {
     SecureRandom random = SecureRandom.getInstanceStrong();
     int maxDelay = 1000;
-    int QPS = 10000;
+    int TPS = 10000;
 
-    CountDownLatch latch = new CountDownLatch(QPS);
+    CountDownLatch latch = new CountDownLatch(TPS);
     ExecutorService invoker = new ThreadPoolExecutor(4, 4, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
         r -> new Thread(r, "invoker"));
     ExecutorService executor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
@@ -393,7 +408,7 @@ public void testAddDelayedTasksWith100ThreadsConcurrently() throws Exception {
 
     Thread.sleep(1000);
 
-    for (int i = 0; i < QPS; i++) {
+    for (int i = 0; i < TPS; i++) {
         invoker.execute(() -> Cost.costMerge(() -> {
             final long startTime = System.nanoTime();
             int delay = random.nextInt(maxDelay);
@@ -410,7 +425,7 @@ public void testAddDelayedTasksWith100ThreadsConcurrently() throws Exception {
     addTaskCost.println();
     delayError.println();
     Assertions.assertTrue(await);
-    Assertions.assertEquals(QPS, completeDelayTaskCounter.get());
+    Assertions.assertEquals(TPS, completeDelayTaskCounter.get());
 
     AtomicLong taskCnt = TestUtil.getField(tw, "taskCnt");
     Assertions.assertEquals(0, taskCnt.get());
@@ -442,11 +457,11 @@ CPU使用率峰值为9%。
 ```java
 @Test
 public void testSimulateNormalUseCase() throws Exception {
-    SecureRandom random = SecureRandom.getInstanceStrong();
+   	SecureRandom random = SecureRandom.getInstanceStrong();
     int maxDelay = 10000;
-    int MPS = 10000;
+    int TPM = 10000;
 
-    CountDownLatch latch = new CountDownLatch(MPS);
+    CountDownLatch latch = new CountDownLatch(TPM);
     ExecutorService invoker = new ThreadPoolExecutor(4, 4, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
         r -> new Thread(r, "invoker"));
     ExecutorService executor = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
@@ -459,7 +474,7 @@ public void testSimulateNormalUseCase() throws Exception {
     Statistic delayError = Statistic.newStatistic("delayError");
 
     Thread.sleep(1000);
-    int surplus = MPS;
+    int surplus = TPM;
     while (surplus > 0) {
         int wt = random.nextInt(200);
         Thread.sleep(wt);
@@ -484,7 +499,7 @@ public void testSimulateNormalUseCase() throws Exception {
     addTaskCost.println();
     delayError.println();
     Assertions.assertTrue(await);
-    Assertions.assertEquals(MPS, completeDelayTaskCounter.get());
+    Assertions.assertEquals(TPM, completeDelayTaskCounter.get());
 
     AtomicLong taskCnt = TestUtil.getField(tw, "taskCnt");
     Assertions.assertEquals(0, taskCnt.get());
@@ -525,40 +540,41 @@ CPU使用率峰值为4%。
 ### shell脚本
 
 ```shell
-java -jar -Xlog:gc* -Xlog:gc:./logs/gc-expired.log -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=./dump/expired.dump *.jar
+java -jar -Xmx100M -Xms100M -Xlog:gc* -Xlog:gc:./logs/gc-abc.log -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=./dump/abc.dump *.jar
 ```
-
-
 
 #### 调用代码
 
 ```java
 public static void main(String[] args) throws Exception {
-    Field field = FieldUtils.getDeclaredField(LoggerFactory.class,
-        "DEFAULT_LOG_CONFIG", true);
-    LogConfig config = (LogConfig) field.get(null);
+    Field field = FieldUtils.getDeclaredField(LoggerFactory.class, "DEFAULT_LOG_CONFIG", true);
+    LogConfig config = (LogConfig)field.get(null);
     config.setLogLevel(LogLevel.INFO);
-    SecureRandom random = SecureRandom.getInstanceStrong();
+    Random random = new Random();
     int maxDelay = 10000;
-    int MPS = 10000;
+    int QPM = 10000;
     ExecutorService executor = new ThreadPoolExecutor(2, 2, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
         r -> new Thread(r, "executor"));
     TimeWheel tw = TimeWheelFactory.create("timewheel", 100, 10, TimeWheelFactory.EXPIRED_BY_GC, executor);
-    System.out.println("start");
+    AtomicLong cnt = new AtomicLong(0);
+    System.out.println("DemoMain start");
     while (true) {
-        int surplus = MPS;
+        int surplus = QPM;
         while (surplus > 0) {
             int wt = random.nextInt(200);
             Thread.sleep(wt);
             int num = Math.min(surplus, random.nextInt(50));
             for (int i = 0; i < num; i++) {
                 int delay = random.nextInt(maxDelay);
-                tw.executeWithDelay(delay, "test", () -> {
-                });
+                addTask(tw, delay, cnt);
             }
             surplus -= num;
         }
     }
+}
+
+private static void addTask(TimeWheel tw, int delay, AtomicLong cnt) {
+    tw.executeWithDelay(delay, "test", cnt::incrementAndGet);
 }
 ```
 
@@ -577,21 +593,27 @@ public static void main(String[] args) throws Exception {
 
 ##### gc mode
 
-![image-20231211101315804](./../img/image-20231211101315804.png)
+![image-20231211161225467](./../img/image-20231211161225467.png)
+
+![image-20231211173922222](./../img/image-20231211173922222.png)
+
+平均1200s一次FullGC。
 
 
 
 ##### expired mode
 
-![image-20231211101353572](./../img/image-20231211101353572.png)
+![image-20231211160915610](./../img/image-20231211160915610.png)
+
+平均150s一次YoungGC
 
 
 
 ##### execution mode
 
-![image-20231211101425651](./../img/image-20231211101425651.png)
+![image-20231211160851516](./../img/image-20231211160851516.png)
 
-3种模式下平均每10000s进行一次Young GC
+平均250s一次YoungGC
 
 
 
@@ -607,7 +629,5 @@ public static void main(String[] args) throws Exception {
 
 ##### execution mode
 
-![image-20231211130111594](./../img/image-20231211130111594.png)
 
-![image-20231211130251626](./../img/image-20231211130251626.png)
 
