@@ -522,6 +522,48 @@ CPU使用率峰值为4%。
 
 ### 稳定性测试
 
+### shell脚本
+
+```shell
+java -jar -Xlog:gc* -Xlog:gc:./logs/gc-expired.log -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=./dump/expired.dump *.jar
+```
+
+
+
+#### 调用代码
+
+```java
+public static void main(String[] args) throws Exception {
+    Field field = FieldUtils.getDeclaredField(LoggerFactory.class,
+        "DEFAULT_LOG_CONFIG", true);
+    LogConfig config = (LogConfig) field.get(null);
+    config.setLogLevel(LogLevel.INFO);
+    SecureRandom random = SecureRandom.getInstanceStrong();
+    int maxDelay = 10000;
+    int MPS = 10000;
+    ExecutorService executor = new ThreadPoolExecutor(2, 2, 0, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(),
+        r -> new Thread(r, "executor"));
+    TimeWheel tw = TimeWheelFactory.create("timewheel", 100, 10, TimeWheelFactory.EXPIRED_BY_GC, executor);
+    System.out.println("start");
+    while (true) {
+        int surplus = MPS;
+        while (surplus > 0) {
+            int wt = random.nextInt(200);
+            Thread.sleep(wt);
+            int num = Math.min(surplus, random.nextInt(50));
+            for (int i = 0; i < num; i++) {
+                int delay = random.nextInt(maxDelay);
+                tw.executeWithDelay(delay, "test", () -> {
+                });
+            }
+            surplus -= num;
+        }
+    }
+}
+```
+
+
+
 #### 测试机器配置
 
 | 参数      | 值                                        |
@@ -550,3 +592,22 @@ CPU使用率峰值为4%。
 ![image-20231211101425651](./../img/image-20231211101425651.png)
 
 3种模式下平均每10000s进行一次Young GC
+
+
+
+#### 内存使用
+
+##### gc mode
+
+
+
+##### expired mode
+
+
+
+##### execution mode
+
+![image-20231211130111594](./../img/image-20231211130111594.png)
+
+![image-20231211130251626](./../img/image-20231211130251626.png)
+

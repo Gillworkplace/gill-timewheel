@@ -3,7 +3,6 @@ package com.gill.timewheel.core;
 import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
-import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.time.Instant;
 import java.util.List;
@@ -42,17 +41,9 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
     private static final RejectedExecutionHandler CLEANER_POLICY = new DiscardPolicy();
 
-    private static final SecureRandom RANDOM;
+    private static final SecureRandom RANDOM = new SecureRandom();
 
     private static final String REMOVE_TASK_PREFIX = "remove-key:";
-
-    static {
-        try {
-            RANDOM = SecureRandom.getInstanceStrong();
-        } catch (NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
-        }
-    }
 
     private final String name;
 
@@ -201,7 +192,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
             // 移除过期的wheel
             removeIfWheelHasBeenExpired(ti, wi);
-            assert taskCnt.addAndGet(-cnt) >= 0;
+            taskCnt.addAndGet(-cnt);
         }
     }
 
