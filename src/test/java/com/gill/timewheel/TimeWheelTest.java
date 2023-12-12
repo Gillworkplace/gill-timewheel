@@ -1,6 +1,7 @@
 package com.gill.timewheel;
 
 import java.time.Instant;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -197,5 +198,39 @@ public class TimeWheelTest {
         Assertions.assertThrowsExactly(TimeWheelTerminatedException.class, () -> timeWheel.delete(1));
         Assertions.assertDoesNotThrow(timeWheel::terminate);
         Assertions.assertEquals(1, flag.get());
+    }
+
+    /**
+     * execution mode下 cancel的task应该从缓存中移除
+     *
+     * @throws Exception ex
+     */
+    @Test
+    public void testExecutionModeCancelTask_taskCacheShouldRemoveCancelTask() throws Exception {
+        AtomicInteger flag = new AtomicInteger(0);
+        TimeWheel timeWheel = TimeWheelFactory.create("default", 10, 10, TimeWheelFactory.EXPIRED_AFTER_EXECUTION);
+        long key = 1L;
+        timeWheel.executeWithDelay(key, 50, "delay-0", TestUtil.wrap(0, flag));
+        timeWheel.cancel(key);
+        Thread.sleep(100);
+        Assertions.assertEquals(0, flag.get());
+        Assertions.assertEquals(0, ((Map<Long, ?>)TestUtil.getField(timeWheel, "taskCache")).size());
+    }
+
+    /**
+     * execution mode下 同步执行的task应该从缓存中移除
+     *
+     * @throws Exception ex
+     */
+    @Test
+    public void testExecutionModeSyncExecuteTask_taskCacheShouldRemoveTask() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicInteger flag = new AtomicInteger(0);
+        TimeWheel timeWheel = TimeWheelFactory.create("default", 10, 10, TimeWheelFactory.EXPIRED_AFTER_EXECUTION);
+        long key = 1L;
+        timeWheel.executeWithDelay(key, 0, "delay-0", TestUtil.wrap(0, flag, latch));
+        latch.await();
+        Assertions.assertEquals(1, flag.get());
+        Assertions.assertEquals(0, ((Map<Long, ?>)TestUtil.getField(timeWheel, "taskCache")).size());
     }
 }

@@ -108,8 +108,6 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
     private volatile boolean running = true;
 
-    private final AtomicLong taskCnt = new AtomicLong(0);
-
     private Function<Task, TaskWrapper> taskWrapperFactory = TaskWrapper::new;
 
     private BiFunction<Long, Runnable, Runnable> taskRunnableFactory = (key, runnable) -> runnable;
@@ -119,6 +117,18 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
     private Consumer<Long> registerRemoveTask = key -> {
     };
+
+    private Function<Task, Boolean> taskCancel = Task::isCancel;
+
+    // 指标数据
+
+    private final AtomicLong taskCnt = new AtomicLong(0);
+
+    private final AtomicLong exeCnt = new AtomicLong(0);
+
+    private final AtomicLong cancelCnt = new AtomicLong(0);
+
+    private final AtomicLong delCnt = new AtomicLong(0);
 
     DefaultTimeWheel(String name, long tick, int wheelSize, long expired, TimeWheelConfig config,
         ExecutorService defaultTaskExecutor) {
@@ -146,6 +156,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
             // execution mode
             this.taskRunnableFactory = this::executionModeTaskRunnable;
+            this.taskCancel = this::executionModeTaskCancel;
         } else {
 
             // expired mode
@@ -173,6 +184,14 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         };
     }
 
+    private Boolean executionModeTaskCancel(Task task) {
+        boolean cancel = task.isCancel();
+        if (cancel) {
+            taskCache.remove(task.getKey());
+        }
+        return cancel;
+    }
+
     private void expiredModeRegisterRemoveTask(long key) {
         if (!expiredMode()) {
             return;
@@ -189,7 +208,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         if (tT > now + tick && addTaskToWheel(task)) {
             return;
         }
-        executeAsync(taskName, remove);
+        executeAsync(task);
     }
 
     private static long getNow() {
@@ -265,7 +284,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
             for (Task task : tasks) {
                 ExecutorService executor = task.getExecutorService();
                 Runnable run = task.getRunnable();
-                if (task.isCancel()) {
+                if (taskCancel.apply(task)) {
                     continue;
                 }
                 cnt++;
@@ -275,6 +294,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
             // 移除过期的wheel
             removeIfWheelHasBeenExpired(ti, wi);
             taskCnt.addAndGet(-cnt);
+            this.exeCnt.addAndGet(cnt);
         }
     }
 
@@ -428,7 +448,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         log.debug("timewheel {} execute task {} right now", name, taskName, now);
 
         // 若延时任务已过期则在当前线程执行
-        executeSync(taskName, runnable);
+        executeSync(task);
     }
 
     private boolean addTaskToWheel(Task task) {
@@ -443,12 +463,15 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         return false;
     }
 
-    private void executeSync(String taskName, Runnable runnable) {
-        RunnableWrapper.run(taskName, runnable);
+    private void executeSync(Task task) {
+        RunnableWrapper.run(task.getName(), taskRunnableFactory.apply(task.getKey(), task.getRunnable()));
+        this.exeCnt.incrementAndGet();
     }
 
-    private void executeAsync(String taskName, Runnable runnable) {
-        this.defaultTaskExecutor.execute(new RunnableWrapper(taskName, runnable));
+    private void executeAsync(Task task) {
+        this.defaultTaskExecutor
+            .execute(new RunnableWrapper(task.getName(), taskRunnableFactory.apply(task.getKey(), task.getRunnable())));
+        this.exeCnt.incrementAndGet();
     }
 
     /**
@@ -463,6 +486,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         if (task != null && task.cancel()) {
             log.info("timewheel {} cancels task: {}", name, key);
             taskCnt.decrementAndGet();
+            cancelCnt.incrementAndGet();
         }
     }
 
@@ -478,6 +502,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         if (task != null && task.cancel()) {
             log.info("timewheel {} delete task: {}", name, key);
             taskCnt.decrementAndGet();
+            delCnt.incrementAndGet();
         }
     }
 
