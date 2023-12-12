@@ -18,6 +18,8 @@ import java.util.concurrent.ThreadPoolExecutor.DiscardPolicy;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import java.util.function.Function;
 
 import com.gill.gutil.log.ILogger;
@@ -108,7 +110,15 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
     private final AtomicLong taskCnt = new AtomicLong(0);
 
-    private final Function<Task, TaskWrapper> taskWrapperFactory;
+    private Function<Task, TaskWrapper> taskWrapperFactory = TaskWrapper::new;
+
+    private BiFunction<Long, Runnable, Runnable> taskRunnableFactory = (key, runnable) -> runnable;
+
+    private Runnable cleanIdempotenceAsync = () -> {
+    };
+
+    private Consumer<Long> registerRemoveTask = key -> {
+    };
 
     DefaultTimeWheel(String name, long tick, int wheelSize, long expired, TimeWheelConfig config,
         ExecutorService defaultTaskExecutor) {
@@ -116,18 +126,86 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         this.tick = tick;
         this.wheelSize = wheelSize;
         this.expired = expired;
-        this.taskWrapperFactory = expired < 0 ? task -> new TaskWrapper(task, this.rq) : TaskWrapper::new;
         this.config = config;
         this.period = tick * wheelSize;
         this.defaultTaskExecutor = defaultTaskExecutor;
         this.stt = getNow();
+        this.init();
 
         // 启动定时器
         this.eventLoop.execute(this);
     }
 
+    private void init() {
+        if (gcMode()) {
+
+            // gc mode
+            this.taskWrapperFactory = task -> new TaskWrapper(task, this.rq);
+            this.cleanIdempotenceAsync = this::gcModeCleanIdempotenceAsync;
+        } else if (executionMode()) {
+
+            // execution mode
+            this.taskRunnableFactory = this::executionModeTaskRunnable;
+        } else {
+
+            // expired mode
+            this.registerRemoveTask = this::expiredModeRegisterRemoveTask;
+        }
+    }
+
+    private void gcModeCleanIdempotenceAsync() {
+        cleaner.execute(() -> {
+            Reference<?> ref;
+            while ((ref = rq.poll()) != null) {
+                long key = ((TaskWrapper)ref).getKey();
+                log.debug("remove idempotence key: {}", key);
+                taskCache.remove(key);
+            }
+        });
+    }
+
+    private Runnable executionModeTaskRunnable(Long key, Runnable runnable) {
+        return () -> {
+            runnable.run();
+
+            // EXPIRED_AFTER_EXECUTION 才执行
+            taskCache.remove(key);
+        };
+    }
+
+    private void expiredModeRegisterRemoveTask(long key) {
+        if (!expiredMode()) {
+            return;
+        }
+        long now = getNow();
+        long expiredTime = expired + now;
+        long dT = (expiredTime - stt) / tick * tick;
+        long wIdx = dT / period;
+        int tIdx = (int)(dT % period / tick);
+        long tT = dT + stt;
+        String taskName = REMOVE_TASK_PREFIX + key;
+        Runnable remove = () -> taskCache.remove(key);
+        Task task = new Task(key, taskName, wIdx, tIdx, defaultTaskExecutor, remove);
+        if (tT > now + tick && addTaskToWheel(task)) {
+            return;
+        }
+        executeAsync(taskName, remove);
+    }
+
     private static long getNow() {
         return (System.nanoTime() + 999999) / 1000000;
+    }
+
+    private boolean gcMode() {
+        return this.expired < 0;
+    }
+
+    private boolean executionMode() {
+        return this.expired == 0;
+    }
+
+    private boolean expiredMode() {
+        return this.expired > 0;
     }
 
     @Override
@@ -136,7 +214,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         int lastTickIdx = 0;
         while (running) {
             long now = getNow();
-            cleanIdempotenceAsync();
+            cleanIdempotenceAsync.run();
             try {
 
                 // 没有任务时进入阻塞状态
@@ -191,7 +269,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
                     continue;
                 }
                 cnt++;
-                executor.execute(taskRunnableWrapper(task.getKey(), run));
+                executor.execute(taskRunnableFactory.apply(task.getKey(), run));
             }
 
             // 移除过期的wheel
@@ -203,33 +281,6 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
     private void removeIfWheelHasBeenExpired(int ti, long wi) {
         if (ti == wheelSize - 1) {
             wheels.remove(wi);
-        }
-    }
-
-    private void cleanIdempotenceAsync() {
-        cleaner.execute(this::removeUselessTask);
-    }
-
-    private Runnable taskRunnableWrapper(long key, Runnable runnable) {
-        return () -> {
-            runnable.run();
-
-            // EXPIRED_AFTER_EXECUTION 才执行
-            if (expired == 0) {
-                taskCache.remove(key);
-            }
-        };
-    }
-
-    private void removeUselessTask() {
-        if (expired >= 0) {
-            return;
-        }
-        Reference<?> ref;
-        while ((ref = rq.poll()) != null) {
-            long key = ((TaskWrapper)ref).getKey();
-            log.debug("remove idempotence key: {}", key);
-            taskCache.remove(key);
         }
     }
 
@@ -367,7 +418,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         }
 
         // 注册过期移除缓存任务
-        registerRemoveTask(key);
+        registerRemoveTask.accept(key);
 
         // 将任务添加到轮盘中
         // tT在一个tick的周期内执行则直接同步执行
@@ -398,25 +449,6 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
     private void executeAsync(String taskName, Runnable runnable) {
         this.defaultTaskExecutor.execute(new RunnableWrapper(taskName, runnable));
-    }
-
-    private void registerRemoveTask(long key) {
-        if (expired <= 0) {
-            return;
-        }
-        long now = getNow();
-        long expiredTime = expired + now;
-        long dT = (expiredTime - stt) / tick * tick;
-        long wIdx = dT / period;
-        int tIdx = (int)(dT % period / tick);
-        long tT = dT + stt;
-        String taskName = REMOVE_TASK_PREFIX + key;
-        Runnable remove = () -> taskCache.remove(key);
-        Task task = new Task(key, taskName, wIdx, tIdx, defaultTaskExecutor, remove);
-        if (tT > now + tick && addTaskToWheel(task)) {
-            return;
-        }
-        executeAsync(taskName, remove);
     }
 
     /**
