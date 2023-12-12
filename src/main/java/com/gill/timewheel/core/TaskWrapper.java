@@ -13,6 +13,11 @@ class TaskWrapper extends WeakReference<Task> {
 
     private final long key;
 
+    public TaskWrapper(Task reference) {
+        super(reference);
+        this.key = reference.getKey();
+    }
+
     public TaskWrapper(Task reference, ReferenceQueue<? super Task> q) {
         super(reference, q);
         this.key = reference.getKey();

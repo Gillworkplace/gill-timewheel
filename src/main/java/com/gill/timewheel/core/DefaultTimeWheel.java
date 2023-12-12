@@ -18,6 +18,7 @@ import java.util.concurrent.ThreadPoolExecutor.DiscardPolicy;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.Function;
 
 import com.gill.gutil.log.ILogger;
 import com.gill.gutil.log.LoggerFactory;
@@ -107,12 +108,15 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
     private final AtomicLong taskCnt = new AtomicLong(0);
 
+    private final Function<Task, TaskWrapper> taskWrapperFactory;
+
     DefaultTimeWheel(String name, long tick, int wheelSize, long expired, TimeWheelConfig config,
         ExecutorService defaultTaskExecutor) {
         this.name = name;
         this.tick = tick;
         this.wheelSize = wheelSize;
         this.expired = expired;
+        this.taskWrapperFactory = expired < 0 ? task -> new TaskWrapper(task, this.rq) : TaskWrapper::new;
         this.config = config;
         this.period = tick * wheelSize;
         this.defaultTaskExecutor = defaultTaskExecutor;
@@ -218,7 +222,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
     }
 
     private void removeUselessTask() {
-        if (expired > 0) {
+        if (expired >= 0) {
             return;
         }
         Reference<?> ref;
@@ -354,7 +358,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         int tIdx = (int)(dT % period / tick);
         long tT = dT + stt;
         Task task = new Task(key, taskName, wIdx, tIdx, executor, runnable);
-        TaskWrapper taskWrapper = new TaskWrapper(task, rq);
+        TaskWrapper taskWrapper = taskWrapperFactory.apply(task);
 
         // 幂等性校验
         if (taskCache.computeIfAbsent(key, k -> taskWrapper) != taskWrapper) {
