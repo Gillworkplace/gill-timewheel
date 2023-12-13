@@ -285,9 +285,9 @@ public void testExecution() throws InterruptedException, NoSuchAlgorithmExceptio
 
 ##### 性能报告
 
-![image-20231208180120976](./../img/image-20231208180120976.png)
+![image-20231208180120976](./design/img/image-20231208180120976.png)
 
-![image-20231208180227526](./../img/image-20231208180227526.png)
+![image-20231208180227526](./design/img/image-20231208180227526.png)
 
 CPU使用率峰值为5%
 
@@ -358,9 +358,9 @@ public void testExecution2() throws Exception {
 
 ##### 性能报告
 
-![image-20231208190635212](./../img/image-20231208190635212.png)
+![image-20231208190635212](./design/img/image-20231208190635212.png)
 
-![image-20231208190649458](./../img/image-20231208190649458.png)
+![image-20231208190649458](./design/img/image-20231208190649458.png)
 
 CPU使用率峰值为5%
 
@@ -383,7 +383,7 @@ CPU使用率峰值为5%
 | CPU核心数 | 8                 |
 | 内存大小  | 32G               |
 
-![image-20231211100327694](./../img/image-20231211100327694.png)
+![image-20231211100327694](./design/img/image-20231211100327694.png)
 
 #### 10000个10ms延时任务瞬时提交，tick周期为10ms
 
@@ -436,9 +436,9 @@ public void testAddDelayedTasksWith100ThreadsConcurrently() throws Exception {
 
 ##### 性能报告
 
-![image-20231208183102610](./../img/image-20231208183102610.png)
+![image-20231208183102610](./design/img/image-20231208183102610.png)
 
-![image-20231208183122864](./../img/image-20231208183122864.png)
+![image-20231208183122864](./design/img/image-20231208183122864.png)
 
 CPU使用率峰值为9%。
 
@@ -510,9 +510,9 @@ public void testSimulateNormalUseCase() throws Exception {
 
 ##### 性能报告
 
-![image-20231208185708693](./../img/image-20231208185708693.png)
+![image-20231208185708693](./design/img/image-20231208185708693.png)
 
-![image-20231208185827835](./../img/image-20231208185827835.png)
+![image-20231208185827835](./design/img/image-20231208185827835.png)
 
 CPU使用率峰值为4%。
 
@@ -606,9 +606,9 @@ private static void addTask(TimeWheel tw, int delay, AtomicLong cnt) {
 
 ##### gc mode
 
-![image-20231211161225467](./../img/image-20231211161225467.png)
+![image-20231211161225467](./design/img/image-20231211161225467.png)
 
-![image-20231211203114081](./../img/image-20231211203114081.png)
+![image-20231211203114081](./design/img/image-20231211203114081.png)
 
 平均1000s一次FullGC。
 
@@ -616,7 +616,7 @@ private static void addTask(TimeWheel tw, int delay, AtomicLong cnt) {
 
 ##### expired mode
 
-![image-20231211160915610](./../img/image-20231211160915610.png)
+![image-20231211160915610](./design/img/image-20231211160915610.png)
 
 平均150s一次YoungGC
 
@@ -624,7 +624,7 @@ private static void addTask(TimeWheel tw, int delay, AtomicLong cnt) {
 
 ##### execution mode
 
-![image-20231211160851516](./../img/image-20231211160851516.png)
+![image-20231211160851516](./design/img/image-20231211160851516.png)
 
 平均250s一次YoungGC
 
@@ -634,13 +634,13 @@ private static void addTask(TimeWheel tw, int delay, AtomicLong cnt) {
 
 ##### 运行1小时
 
-![image-20231212150350618](./../img/image-20231212150350618.png)
+![image-20231212150350618](./design/img/image-20231212150350618.png)
 
 ###### gc mode
 
-![image-20231212150331151](./../img/image-20231212150331151.png)
+![image-20231212150331151](./design/img/image-20231212150331151.png)
 
-![image-20231212145929543](./../img/image-20231212145929543.png)
+![image-20231212145929543](./design/img/image-20231212145929543.png)
 
 等待执行的任务数量为1291个，内存占用389kB + 62kB + 31Kb = 482Kb，平均每个任务占用0.37kB
 
@@ -648,9 +648,9 @@ private static void addTask(TimeWheel tw, int delay, AtomicLong cnt) {
 
 ###### execution mode
 
-![image-20231212150423751](./../img/image-20231212150423751.png)
+![image-20231212150423751](./design/img/image-20231212150423751.png)
 
-![image-20231212145913617](./../img/image-20231212145913617.png)
+![image-20231212145913617](./design/img/image-20231212145913617.png)
 
 等待执行的任务数量为1052个，内存占用50kB + 42kB + 25Kb = 117Kb，平均每个任务占用0.11kB
 
@@ -658,9 +658,9 @@ private static void addTask(TimeWheel tw, int delay, AtomicLong cnt) {
 
 ###### expired mode
 
-![image-20231212150450610](./../img/image-20231212150450610.png)
+![image-20231212150450610](./design/img/image-20231212150450610.png)
 
-![image-20231212145944034](./../img/image-20231212145944034.png)
+![image-20231212145944034](./design/img/image-20231212145944034.png)
 
 等待执行的任务数量为1259个，内存占用118kB + 59kB + 50Kb + 30kB= 257Kb，平均每个任务占用0.2kB
 
@@ -670,13 +670,13 @@ private static void addTask(TimeWheel tw, int delay, AtomicLong cnt) {
 
 ##### 运行2小时
 
-![image-20231212160030715](./../img/image-20231212160030715.png)
+![image-20231212160030715](./design/img/image-20231212160030715.png)
 
 ###### gc mode
 
-![image-20231212160108995](./../img/image-20231212160108995.png)
+![image-20231212160108995](./design/img/image-20231212160108995.png)
 
-![image-20231212155925064](./../img/image-20231212155925064.png)
+![image-20231212155925064](./design/img/image-20231212155925064.png)
 
 等待执行的任务数量为1143个，内存占用69kB + 54kB + 27Kb= 151Kb，平均每个任务占用0.13kB
 
@@ -684,9 +684,9 @@ private static void addTask(TimeWheel tw, int delay, AtomicLong cnt) {
 
 ###### execution mode
 
-![image-20231212160130228](./../img/image-20231212160130228.png)
+![image-20231212160130228](./design/img/image-20231212160130228.png)
 
-![image-20231212155958543](./../img/image-20231212155958543.png)
+![image-20231212155958543](./design/img/image-20231212155958543.png)
 
 等待执行的任务数量为1141个，内存占用55kB + 46kB + 27Kb= 128Kb，平均每个任务占用0.11kB
 
@@ -694,9 +694,9 @@ private static void addTask(TimeWheel tw, int delay, AtomicLong cnt) {
 
 ###### expired mode
 
-![image-20231212160151580](./../img/image-20231212160151580.png)
+![image-20231212160151580](./design/img/image-20231212160151580.png)
 
-![image-20231212160018108](./../img/image-20231212160018108.png)
+![image-20231212160018108](./design/img/image-20231212160018108.png)
 
 等待执行的任务数量为1093个，内存占用108kB + 54kB + 53Kb + 26kB= 241Kb，平均每个任务占用0.22kB
 
@@ -706,9 +706,9 @@ private static void addTask(TimeWheel tw, int delay, AtomicLong cnt) {
 
 ###### gc mode
 
-![image-20231212180046303](./../img/image-20231212180046303.png)
+![image-20231212180046303](./design/img/image-20231212180046303.png)
 
-![image-20231212175948495](./../img/image-20231212175948495.png)
+![image-20231212175948495](./design/img/image-20231212175948495.png)
 
 等待执行的任务数量为1373个，内存占用404kB + 66kB + 33Kb= 503Kb，平均每个任务占用0.37kB
 
@@ -716,9 +716,9 @@ private static void addTask(TimeWheel tw, int delay, AtomicLong cnt) {
 
 ###### execution mode
 
-![image-20231212180102094](./../img/image-20231212180102094.png)
+![image-20231212180102094](./design/img/image-20231212180102094.png)
 
-![image-20231212175957260](./../img/image-20231212175957260.png)
+![image-20231212175957260](./design/img/image-20231212175957260.png)
 
 等待执行的任务数量为1150个，内存占用55kB + 46kB + 28Kb= 129Kb，平均每个任务占用0.11kB
 
@@ -726,9 +726,9 @@ private static void addTask(TimeWheel tw, int delay, AtomicLong cnt) {
 
 ###### expired mode
 
-![image-20231212180122687](./../img/image-20231212180122687.png)
+![image-20231212180122687](./design/img/image-20231212180122687.png)
 
-![image-20231212180007125](./../img/image-20231212180007125.png)
+![image-20231212180007125](./design/img/image-20231212180007125.png)
 
 等待执行的任务数量为1150个，内存占用111kB + 55kB + 46Kb + 28kB= 240Kb，平均每个任务占用0.2kB
 
@@ -748,3 +748,4 @@ private static void addTask(TimeWheel tw, int delay, AtomicLong cnt) {
 | 平均任务大小（kB）   | 0.30              | 0.11                | 0.21               |
 
 gc模式下因为过期的延时任务是需要等待YoungGC或者FullGC触发，所以内存占用比较大且波动范围大。execution和expired模式则较为稳定。
+
