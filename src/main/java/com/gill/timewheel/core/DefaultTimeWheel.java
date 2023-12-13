@@ -1,7 +1,5 @@
 package com.gill.timewheel.core;
 
-import java.lang.ref.Reference;
-import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
 import java.security.SecureRandom;
 import java.time.Instant;
@@ -14,13 +12,9 @@ import java.util.concurrent.RejectedExecutionHandler;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor.AbortPolicy;
-import java.util.concurrent.ThreadPoolExecutor.DiscardPolicy;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.LockSupport;
-import java.util.function.BiFunction;
-import java.util.function.Consumer;
-import java.util.function.Function;
 
 import com.gill.gutil.log.ILogger;
 import com.gill.gutil.log.LoggerFactory;
@@ -42,11 +36,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
     private static final RejectedExecutionHandler EVENT_LOOP_POLICY = new AbortPolicy();
 
-    private static final RejectedExecutionHandler CLEANER_POLICY = new DiscardPolicy();
-
     private static final SecureRandom RANDOM = new SecureRandom();
-
-    private static final String REMOVE_TASK_PREFIX = "remove-key:";
 
     private final String name;
 
@@ -88,37 +78,16 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
     private final Map<Long, TaskWrapper> taskCache = new ConcurrentHashMap<>();
 
     /**
-     * 记录被GC回收的taskReference
-     */
-    private final ReferenceQueue<Object> rq = new ReferenceQueue<>();
-
-    /**
      * tick调度器
      */
     private final ExecutorService eventLoop = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
-        new SynchronousQueue<>(), new NamedThreadFactory("timewheel-main", true), EVENT_LOOP_POLICY);
-
-    /**
-     * 用于清理幂等任务缓存
-     */
-    private final ExecutorService cleaner = new ThreadPoolExecutor(1, 1, 0, TimeUnit.MILLISECONDS,
-        new SynchronousQueue<>(), new NamedThreadFactory("timewheel-cleaner", true), CLEANER_POLICY);
+        new SynchronousQueue<>(), new NamedThreadFactory("time-wheel-main", true), EVENT_LOOP_POLICY);
 
     private final ExecutorService defaultTaskExecutor;
 
     private volatile boolean running = true;
 
-    private Function<Task, TaskWrapper> taskWrapperFactory = TaskWrapper::new;
-
-    private BiFunction<Long, Runnable, Runnable> taskRunnableFactory = (key, runnable) -> runnable;
-
-    private Runnable cleanIdempotenceAsync = () -> {
-    };
-
-    private Consumer<Long> registerRemoveTask = key -> {
-    };
-
-    private Function<Task, Boolean> taskCancel = Task::isCancel;
+    private final IdempotenceExpireStrategy idempotenceExpireStrategy;
 
     // 指标数据
 
@@ -140,91 +109,24 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         this.period = tick * wheelSize;
         this.defaultTaskExecutor = defaultTaskExecutor;
         this.stt = getNow();
-        this.init();
+        this.idempotenceExpireStrategy = newIdempotenceExpiredStrategy(expired);
 
         // 启动定时器
         this.eventLoop.execute(this);
     }
 
-    private void init() {
-        if (gcMode()) {
-
-            // gc mode
-            this.taskWrapperFactory = task -> new TaskWrapper(task, this.rq);
-            this.cleanIdempotenceAsync = this::gcModeCleanIdempotenceAsync;
-        } else if (executionMode()) {
-
-            // execution mode
-            this.taskRunnableFactory = this::executionModeTaskRunnable;
-            this.taskCancel = this::executionModeTaskCancel;
+    private IdempotenceExpireStrategy newIdempotenceExpiredStrategy(long expired) {
+        if (expired < 0) {
+            return new GcIdempotenceExpireStrategy(taskCache);
+        } else if (expired == 0) {
+            return new ExecutionIdempotenceExpireStrategy(taskCache);
         } else {
-
-            // expired mode
-            this.registerRemoveTask = this::expiredModeRegisterRemoveTask;
+            return new ExpiredIdempotenceExpireStrategy();
         }
-    }
-
-    private void gcModeCleanIdempotenceAsync() {
-        cleaner.execute(() -> {
-            Reference<?> ref;
-            while ((ref = rq.poll()) != null) {
-                long key = ((TaskWrapper)ref).getKey();
-                log.debug("remove idempotence key: {}", key);
-                taskCache.remove(key);
-            }
-        });
-    }
-
-    private Runnable executionModeTaskRunnable(Long key, Runnable runnable) {
-        return () -> {
-            runnable.run();
-
-            // EXPIRED_AFTER_EXECUTION 才执行
-            taskCache.remove(key);
-        };
-    }
-
-    private Boolean executionModeTaskCancel(Task task) {
-        boolean cancel = task.isCancel();
-        if (cancel) {
-            taskCache.remove(task.getKey());
-        }
-        return cancel;
-    }
-
-    private void expiredModeRegisterRemoveTask(long key) {
-        if (!expiredMode()) {
-            return;
-        }
-        long now = getNow();
-        long expiredTime = expired + now;
-        long dT = (expiredTime - stt) / tick * tick;
-        long wIdx = dT / period;
-        int tIdx = (int)(dT % period / tick);
-        long tT = dT + stt;
-        String taskName = REMOVE_TASK_PREFIX + key;
-        Runnable remove = () -> taskCache.remove(key);
-        Task task = new Task(key, taskName, wIdx, tIdx, defaultTaskExecutor, remove);
-        if (tT > now + tick && addTaskToWheel(task)) {
-            return;
-        }
-        executeAsync(task);
     }
 
     private static long getNow() {
         return (System.nanoTime() + 999999) / 1000000;
-    }
-
-    private boolean gcMode() {
-        return this.expired < 0;
-    }
-
-    private boolean executionMode() {
-        return this.expired == 0;
-    }
-
-    private boolean expiredMode() {
-        return this.expired > 0;
     }
 
     @Override
@@ -233,7 +135,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         int lastTickIdx = 0;
         while (running) {
             long now = getNow();
-            cleanIdempotenceAsync.run();
+            idempotenceExpireStrategy.loopPreHandle();
             try {
 
                 // 没有任务时进入阻塞状态
@@ -249,7 +151,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
                 lastTickIdx = tIdx;
                 waitForNextTick(wIdx, tIdx);
             } catch (InterruptedException e) {
-                log.error("timewheel is interrupted, e: {}", e.toString());
+                log.error("time wheel is interrupted, e: {}", e.toString());
                 break;
             }
         }
@@ -283,12 +185,11 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
             int cnt = 0;
             for (Task task : tasks) {
                 ExecutorService executor = task.getExecutorService();
-                Runnable run = task.getRunnable();
-                if (taskCancel.apply(task)) {
+                if (idempotenceExpireStrategy.isTaskCancel(task)) {
                     continue;
                 }
                 cnt++;
-                executor.execute(taskRunnableFactory.apply(task.getKey(), run));
+                executor.execute(wrapTaskRunnable(task));
             }
 
             // 移除过期的wheel
@@ -423,13 +324,10 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
 
     private void internalExecute(long key, long delay, ExecutorService executor, String taskName, Runnable runnable) {
         long now = getNow();
-        long triggerTime = now + delay;
-        long dT = (triggerTime - stt) / tick * tick;
-        long wIdx = dT / period;
-        int tIdx = (int)(dT % period / tick);
+        long dT = calculateDiffTime(now, delay);
         long tT = dT + stt;
-        Task task = new Task(key, taskName, wIdx, tIdx, executor, runnable);
-        TaskWrapper taskWrapper = taskWrapperFactory.apply(task);
+        Task task = newTask(dT, key, executor, taskName, runnable);
+        TaskWrapper taskWrapper = idempotenceExpireStrategy.newTaskWrapper(task);
 
         // 幂等性校验
         if (taskCache.computeIfAbsent(key, k -> taskWrapper) != taskWrapper) {
@@ -438,17 +336,42 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         }
 
         // 注册过期移除缓存任务
-        registerRemoveTask.accept(key);
+        idempotenceExpireStrategy.idempotentCheckPassesPostHandle(key, this::registerRemoveTask);
 
         // 将任务添加到轮盘中
         // tT在一个tick的周期内执行则直接同步执行
         if (tT > now + tick && addTaskToWheel(task)) {
             return;
         }
-        log.debug("timewheel {} execute task {} right now", name, taskName, now);
+        log.debug("time wheel {} execute task {} right now", name, taskName, now);
 
         // 若延时任务已过期则在当前线程执行
         executeSync(task);
+        this.exeCnt.incrementAndGet();
+    }
+
+    private void registerRemoveTask(long key, String removeTaskPrefix) {
+        long now = getNow();
+        long dT = calculateDiffTime(now, expired);
+        long tT = dT + stt;
+        String taskName = removeTaskPrefix + key;
+        Task task = newTask(dT, key, defaultTaskExecutor, taskName, () -> taskCache.remove(key));
+        if (tT > now + tick && addTaskToWheel(task)) {
+            return;
+        }
+        executeAsync(task);
+        this.exeCnt.incrementAndGet();
+    }
+
+    private long calculateDiffTime(long now, long delay) {
+        long triggerTime = now + delay;
+        return (triggerTime - stt) / tick * tick;
+    }
+
+    private Task newTask(long dT, long key, ExecutorService executor, String taskName, Runnable runnable) {
+        long wIdx = dT / period;
+        int tIdx = (int)(dT % period / tick);
+        return new Task(key, taskName, wIdx, tIdx, executor, runnable);
     }
 
     private boolean addTaskToWheel(Task task) {
@@ -456,7 +379,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         int tickIdx = task.getTickIdx();
         Wheel wheel = wheels.computeIfAbsent(wheelIdx, t -> new Wheel(wheelSize));
         if (wheel.addTask(tickIdx, task)) {
-            log.debug("timewheel {} add task {} to the wheels[{}][{}]", name, task.getName(), wheelIdx, tickIdx);
+            log.debug("time wheel {} add task {} to the wheels[{}][{}]", name, task.getName(), wheelIdx, tickIdx);
             taskCnt.incrementAndGet();
             return true;
         }
@@ -464,14 +387,18 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
     }
 
     private void executeSync(Task task) {
-        RunnableWrapper.run(task.getName(), taskRunnableFactory.apply(task.getKey(), task.getRunnable()));
-        this.exeCnt.incrementAndGet();
+        RunnableWrapper.run(task.getName(), wrapTaskRunnable(task));
+    }
+
+    private Runnable wrapTaskRunnable(Task task) {
+        return () -> {
+            task.getRunnable().run();
+            idempotenceExpireStrategy.executeTaskPostHandle(task.getKey());
+        };
     }
 
     private void executeAsync(Task task) {
-        this.defaultTaskExecutor
-            .execute(new RunnableWrapper(task.getName(), taskRunnableFactory.apply(task.getKey(), task.getRunnable())));
-        this.exeCnt.incrementAndGet();
+        this.defaultTaskExecutor.execute(new RunnableWrapper(task.getName(), wrapTaskRunnable(task)));
     }
 
     /**
@@ -484,7 +411,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         checkState();
         Task task = Optional.ofNullable(taskCache.get(key)).map(WeakReference::get).orElse(null);
         if (task != null && task.cancel()) {
-            log.info("timewheel {} cancels task: {}", name, key);
+            log.info("time wheel {} cancels task: {}", name, key);
             taskCnt.decrementAndGet();
             cancelCnt.incrementAndGet();
         }
@@ -500,7 +427,7 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
         checkState();
         Task task = Optional.ofNullable(taskCache.remove(key)).map(WeakReference::get).orElse(null);
         if (task != null && task.cancel()) {
-            log.info("timewheel {} delete task: {}", name, key);
+            log.info("time wheel {} delete task: {}", name, key);
             taskCnt.decrementAndGet();
             delCnt.incrementAndGet();
         }
@@ -513,13 +440,12 @@ class DefaultTimeWheel implements TimeWheel, Runnable {
     public void terminate() {
         running = false;
         eventLoop.shutdownNow();
-        cleaner.shutdown();
         PoolUtil.awaitTermination(eventLoop, "timewheel-scheduler");
     }
 
     private void checkState() {
         if (!running) {
-            throw new TimeWheelTerminatedException("timewheel " + name + " is terminated");
+            throw new TimeWheelTerminatedException("time wheel " + name + " is terminated");
         }
     }
 
