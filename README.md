@@ -72,7 +72,7 @@ public void demo() throws Exception {
 
 
 ```java
-	/**
+    /**
      * 创建时间轮盘
      * 
      * @param tick 轮盘的扫描间隔
